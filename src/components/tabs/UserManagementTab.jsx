@@ -329,7 +329,7 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
             onClick={openAddModal}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2"
           >
-            <span className="text-xl">➕</span>
+            <span className="text-xl">+</span>
             <span>Thêm nhân sự</span>
           </button>
         )}
@@ -358,7 +358,7 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
       ) : (
         <div className="overflow-x-auto shadow-md rounded-lg">
           <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gradient-to-r from-blue-600 to-purple-600">
+            <thead className="bg-green-600">
               <tr>
                 <th className="px-4 py-3 text-center text-xs font-bold text-white uppercase tracking-wider border border-gray-300">STT</th>
                 <th className="px-4 py-3 text-center text-xs font-medium text-white uppercase tracking-wider border border-gray-300">Họ và Tên</th>
@@ -523,7 +523,7 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-4 rounded-t-lg">
+            <div className="bg-gradient-to-r from-green-600 to-green-100 px-6 py-4 rounded-t-lg">
               <h3 className="text-xl font-bold text-white">Chỉnh sửa thông tin nhân sự</h3>
             </div>
 

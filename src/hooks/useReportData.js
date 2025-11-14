@@ -8,29 +8,26 @@ export function useReportData(userRole, userTeam, userEmail) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const API_URL = 'https://n-api-gamma.vercel.app/report/generate?tableName=Báo cáo MKT';
-
-  // Fetch data from API
+  // Fetch master data from Firebase instead of API
   useEffect(() => {
-    const fetchAPIData = async () => {
+    const fetchMasterData = async () => {
       try {
         setLoading(true);
-        const response = await fetch(API_URL);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const result = await response.json();
+        const masterDataRef = ref(database, 'detail_reports');
+        const snapshot = await get(masterDataRef);
         
-        if (result.success && result.data) {
-          // Process data from API (matching the structure from ReportDashboard)
-          const processedData = result.data
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          
+          // Process data from Firebase (matching the structure from API)
+          const processedData = Object.values(data)
             .filter((r) => r["Tên"] && String(r["Tên"]).trim() !== "")
             .map((r) => {
               const dsChot = Number(r["Doanh số"]) || 0;
               const dsSauHoanHuy = Number(r["DS sau hoàn hủy"]) || 0;
 
               return {
-                id: r["id_NS"] || "",
+                id: r["id"] || r["id_NS"] || "",
                 name: (r["Tên"] || "N/A").trim(),
                 email: (r["Email"] || "").trim(),
                 date: new Date(r["Ngày"]),
@@ -64,14 +61,14 @@ export function useReportData(userRole, userTeam, userEmail) {
           setMasterData([]);
         }
       } catch (err) {
-        console.error('Error fetching API data:', err);
+        console.error('Error fetching master data from Firebase:', err);
         setError(err.message);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchAPIData();
+    fetchMasterData();
   }, []);
 
   // Fetch Firebase reports

@@ -220,15 +220,15 @@ export function MarketEffectivenessTab({ data, filters }) {
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200 border border-gray-300">
-          <thead className="bg-secondary">
+              <thead className="bg-secondary">
             <tr>
-              <th className="px-6 py-3 text-center text-xs font-medium text-white uppercase tracking-wider border border-gray-400">Sản phẩm</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-white uppercase tracking-wider border border-gray-400">Thị trường</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-white uppercase tracking-wider border border-gray-400">CPQC</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-white uppercase tracking-wider border border-gray-400">Số đơn</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-white uppercase tracking-wider border border-gray-400">Doanh số</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-white uppercase tracking-wider border border-gray-400">CPS</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-white uppercase tracking-wider border border-gray-400">%CP/DS</th>
+              <th className="px-6 py-3 text-center text-xs font-normal text-white uppercase tracking-wider border border-gray-400">Sản phẩm</th>
+              <th className="px-6 py-3 text-center text-xs font-normal text-white uppercase tracking-wider border border-gray-400">Thị trường</th>
+              <th className="px-6 py-3 text-center text-xs font-normal text-white uppercase tracking-wider border border-gray-400">CPQC</th>
+              <th className="px-6 py-3 text-center text-xs font-normal text-white uppercase tracking-wider border border-gray-400">Số đơn</th>
+              <th className="px-6 py-3 text-center text-xs font-normal text-white uppercase tracking-wider border border-gray-400">Doanh số</th>
+              <th className="px-6 py-3 text-center text-xs font-normal text-white uppercase tracking-wider border border-gray-400">CPS</th>
+              <th className="px-6 py-3 text-center text-xs font-normal text-white uppercase tracking-wider border border-gray-400">%CP/DS</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -238,13 +238,13 @@ export function MarketEffectivenessTab({ data, filters }) {
               
               return (
                 <tr key={index} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 border border-gray-300">{row.product}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 border border-gray-300">{row.market}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 text-right border border-gray-300">{formatCurrency(row.cpqc)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 text-right border border-gray-300">{formatNumber(row.orders)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 text-right border border-gray-300">{formatCurrency(row.revenue)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 text-center border border-gray-300">{formatCurrency(cps)}</td>
-                  <td className={`px-6 py-4 whitespace-nowrap text-sm font-semibold text-center border border-gray-300 ${
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-normal text-gray-900 border border-gray-300">{row.product}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-normal text-gray-900 border border-gray-300">{row.market}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-normal text-gray-900 text-right border border-gray-300">{formatCurrency(row.cpqc)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-normal text-gray-900 text-right border border-gray-300">{formatNumber(row.orders)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-normal text-gray-900 text-right border border-gray-300">{formatCurrency(row.revenue)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-normal text-gray-900 text-center border border-gray-300">{formatCurrency(cps)}</td>
+                  <td className={`px-6 py-4 whitespace-nowrap text-sm font-normal text-center border border-gray-300 ${
                     cpds > 0.33 ? 'bg-yellow-100 text-yellow-800' : 'text-gray-900'
                   }`}>
                     {formatPercent(cpds)}

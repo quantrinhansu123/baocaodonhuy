@@ -1,8 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { ref, get } from "firebase/database";
-import { database } from "../firebase/config";
 
-export function useF3Data(filters, userRole, userEmail) {
+export function useF3Data(filters, userRole, userEmail, userTeam = '') {
   const [f3Data, setF3Data] = useState([]);
   const [humanResources, setHumanResources] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14,35 +12,35 @@ export function useF3Data(filters, userRole, userEmail) {
       try {
         setLoading(true);
 
-        // Fetch F3 data
-        const f3Ref = ref(database, "f3_data");
-        const f3Snapshot = await get(f3Ref);
+        // Fetch F3 data from direct URL
+        const F3_URL = "https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/F3.json";
+        const f3Response = await fetch(F3_URL);
+        const f3DataRaw = await f3Response.json();
 
-        if (f3Snapshot.exists()) {
-          const data = f3Snapshot.val();
-          const dataArray = Object.entries(data).map(([id, values]) => ({
-            id,
-            ...values,
+        if (Array.isArray(f3DataRaw)) {
+          const dataArray = f3DataRaw.map((item, index) => ({
+            id: index.toString(),
+            ...item,
           }));
           setF3Data(dataArray);
         } else {
-          console.warn("⚠️ No F3 data found in Firebase");
+          console.warn("⚠️ F3 data is not an array");
           setF3Data([]);
         }
 
-        // Fetch human resources data (for leader role)
-        const hrRef = ref(database, "human_resources");
-        const hrSnapshot = await get(hrRef);
+        // Fetch human resources data from direct URL
+        const HR_URL = "https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/Tài_khoản.json";
+        const hrResponse = await fetch(HR_URL);
+        const hrDataRaw = await hrResponse.json();
 
-        if (hrSnapshot.exists()) {
-          const hrData = hrSnapshot.val();
-          const hrArray = Object.entries(hrData).map(([id, values]) => ({
-            id,
-            ...values,
+        if (Array.isArray(hrDataRaw)) {
+          const hrArray = hrDataRaw.map((item, index) => ({
+            id: index.toString(),
+            ...item,
           }));
           setHumanResources(hrArray);
         } else {
-          console.warn("⚠️ No human_resources data found in Firebase");
+          console.warn("⚠️ Human resources data is not an array");
           setHumanResources([]);
         }
       } catch (err) {
@@ -59,6 +57,9 @@ export function useF3Data(filters, userRole, userEmail) {
   // Filtered F3 data with memoization
   const filteredF3Data = useMemo(() => {
     let filtered = [...f3Data];
+
+    // If the user's team explicitly contains 'vận đơn', treat them like a full-access role
+    const hasVanDonTeam = String(userTeam || '').toLowerCase().includes('vận đơn');
 
     // Role-based access control
     if (userRole === "user") {
@@ -109,7 +110,7 @@ export function useF3Data(filters, userRole, userEmail) {
       } else {
         filtered = [];
       }
-    } else if (userRole === "leader") {
+    } else if (userRole === "leader" && !hasVanDonTeam) {
       // Leader: see data from their team members
       // Find current user's team from human_resources
       const currentUser = humanResources.find(
@@ -136,10 +137,9 @@ export function useF3Data(filters, userRole, userEmail) {
           const marketingStaff = item["Nhân viên Marketing"] || "";
           const salesStaff = item["Nhân viên Sale"] || "";
 
-          return teamMembers.some(
-            (member) =>
-              marketingStaff.toLowerCase().includes(member.toLowerCase()) ||
-              salesStaff.toLowerCase().includes(member.toLowerCase())
+          return teamMembers.some((member) =>
+            marketingStaff.toLowerCase().includes(String(member || '').toLowerCase()) ||
+            salesStaff.toLowerCase().includes(String(member || '').toLowerCase())
           );
         });
       } else {
@@ -148,7 +148,9 @@ export function useF3Data(filters, userRole, userEmail) {
     } else if (
       userRole === "admin" ||
       userRole === "accountant" ||
-      userRole === "kế toán"
+      userRole === "kế toán" ||
+      userRole === "vận đơn" ||
+      hasVanDonTeam
     ) {
       // Admin and Accountant: see all data (no filtering needed)
       // filtered remains as is
@@ -220,9 +222,8 @@ export function useF3Data(filters, userRole, userEmail) {
     if (filters.products && filters.products.length > 0) {
       filtered = filtered.filter((item) => {
         const product = item["Mặt hàng"] || item["Tên mặt hàng 1"];
-        return filters.products.some(
-          (p) =>
-            product && String(product).toLowerCase().includes(p.toLowerCase())
+        return filters.products.some((p) =>
+          product && String(product).toLowerCase().includes(String(p || '').toLowerCase())
         );
       });
     }
@@ -236,9 +237,8 @@ export function useF3Data(filters, userRole, userEmail) {
     if (filters.markets && filters.markets.length > 0) {
       filtered = filtered.filter((item) => {
         const market = item["Thị trường"] || item["Market"];
-        return filters.markets.some(
-          (m) =>
-            market && String(market).toLowerCase().includes(m.toLowerCase())
+        return filters.markets.some((m) =>
+          market && String(market).toLowerCase().includes(String(m || '').toLowerCase())
         );
       });
     }
@@ -250,8 +250,25 @@ export function useF3Data(filters, userRole, userEmail) {
       );
     }
 
+    // Payment method filter (supports array of selected methods)
+    if (Array.isArray(filters.paymentMethod) && filters.paymentMethod.length > 0) {
+      const lowers = filters.paymentMethod.map((p) => String(p || '').toLowerCase());
+      filtered = filtered.filter((item) => {
+        const method = item['Hình thức thanh toán'] || item['Hình thức TT'] || '';
+        const m = String(method).toLowerCase();
+        return lowers.some((l) => m.includes(l));
+      });
+    } else if (filters.paymentMethod && typeof filters.paymentMethod === 'string') {
+      // backward-compat: single-string filter
+      const payLower = String(filters.paymentMethod).toLowerCase();
+      filtered = filtered.filter((item) => {
+        const method = item['Hình thức thanh toán'] || item['Hình thức TT'] || '';
+        return String(method).toLowerCase().includes(payLower);
+      });
+    }
+
     return filtered;
-  }, [f3Data, filters, userRole, userEmail, humanResources]);
+  }, [f3Data, filters, userRole, userEmail, humanResources, userTeam]);
 
   return {
     f3Data: filteredF3Data,
