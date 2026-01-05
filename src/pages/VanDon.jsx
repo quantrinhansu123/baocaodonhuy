@@ -1,2559 +1,1585 @@
-import { useState, useMemo, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { toast } from "react-toastify";
-import { Pagination } from "../components/shared/Pagination";
-// Removed Firebase SDK usage. Will use REST endpoints directly.
-import FilterPanel from "../components/FilterPanel";
-import { ArrowLeft } from "lucide-react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  ORDER_MGMT_COLUMNS, BILL_LADING_COLUMNS, COLUMN_MAPPING,
+  EDITABLE_COLS, TEAM_COLUMN_NAME, DROPDOWN_OPTIONS,
+  LONG_TEXT_COLS, PRIMARY_KEY_COLUMN
+} from '../types';
+import '../styles/selection.css';
+import * as API from '../services/api';
+import MultiSelect from '../components/MultiSelect';
+import { rafThrottle } from '../utils/throttle';
+import { ChevronLeft, Settings } from 'lucide-react';
+import ColumnSettingsModal from '../components/ColumnSettingsModal';
 
-export default function VanDon() {
-  // Get user info from localStorage
-  const userRole = localStorage.getItem("userRole") || "user";
-  const userEmail = localStorage.getItem("userEmail") || "";
-  const userTeam = localStorage.getItem("userTeam") || "";
+// Lazy load heavy components
+const SyncPopover = lazy(() => import('../components/SyncPopover'));
+const QuickAddModal = lazy(() => import('../components/QuickAddModal'));
 
-  // Filters state
-  const [filters, setFilters] = useState({
-    startDate: "",
-    endDate: "",
-    products: [],
-    shifts: [],
-    // markets removed per request
-    teams: [],
-    paymentMethod: [],
-    searchText: "",
+const UPDATE_DELAY = 500;
+const BULK_THRESHOLD = 1;
+
+function VanDon() {
+  // --- Data State ---
+  const [allData, setAllData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  // Always use BILL_OF_LADING view - ORDER_MANAGEMENT is hidden
+  const [viewMode] = useState('BILL_OF_LADING');
+
+  // --- Change Tracking ---
+  const [legacyChanges, setLegacyChanges] = useState(new Map());
+  const [pendingChanges, setPendingChanges] = useState(new Map());
+  const [syncPopoverOpen, setSyncPopoverOpen] = useState(false);
+  const [quickAddModalOpen, setQuickAddModalOpen] = useState(false);
+
+  // --- Common Filter State ---
+  const [filterValues, setFilterValues] = useState({
+    market: [],
+    product: [],
+    tracking_include: '',
+    tracking_exclude: ''
   });
+  const [localFilterValues, setLocalFilterValues] = useState(filterValues);
 
-  // Quick select and available filters for the sidebar
-  const [quickSelectValue, setQuickSelectValue] = useState("");
-  const [availableFilters, setAvailableFilters] = useState({
-    products: [],
-    shifts: ["Giữa ca", "Hết ca"],
-    // markets intentionally omitted for this page
-    teams: [],
-    paymentMethods: [],
-  });
-
-  const [currentPage, setCurrentPage] = useState(1);
-  const [editingFullOrder, setEditingFullOrder] = useState(null);
-  const [editFormData, setEditFormData] = useState({
-    "Mã đơn hàng": "",
-    "Name*": "",
-    "Phone*": "",
-    Add: "",
-    City: "",
-    State: "",
-    "Mặt hàng": "",
-    "Số lượng mặt hàng 1": "",
-    "Giá bán": "",
-    "Tổng tiền VNĐ": "",
-    "Nhân viên Marketing": "",
-    "Nhân viên Sale": "",
-    Team: "",
-    Ca: "",
-    "Ngày lên đơn": "",
-    "Trạng thái đơn": "",
-    "Hình thức thanh toán": "",
-  });
-  const itemsPerPage = 50;
-
-  // Status dropdown state
-  const [openStatusDropdown, setOpenStatusDropdown] = useState(null);
-
-  // Local data state to avoid reloading from Firebase
-  const [localF3Data, setLocalF3Data] = useState([]);
-
-  // Loading and error states
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  // Column visibility state
-  const [visibleColumns, setVisibleColumns] = useState({
-    stt: true,
-    orderCode: true,
-    customerName: true,
-    phone: true,
-    address: true,
-    product: true,
-    quantity: true,
-    price: true,
-    totalVND: true,
-    marketing: true,
-    sale: true,
-    team: true,
-    shift: true,
-    orderDate: true,
-    status: true,
-    paymentMethod: true,
-  });
-
-  // Configuration for columns shown in the FilterPanel
-  const columnsConfig = [
-    { key: "stt", label: "STT" },
-    { key: "orderCode", label: "Mã đơn hàng" },
-    { key: "customerName", label: "Tên khách hàng" },
-    { key: "phone", label: "Điện thoại" },
-    { key: "address", label: "Địa chỉ" },
-    { key: "product", label: "Mặt hàng" },
-    { key: "quantity", label: "Số lượng" },
-    { key: "price", label: "Giá bán" },
-    { key: "totalVND", label: "Tổng tiền VNĐ" },
-    { key: "marketing", label: "NV Marketing" },
-    { key: "sale", label: "NV Sale" },
-    { key: "team", label: "Team" },
-    { key: "shift", label: "Ca" },
-    { key: "orderDate", label: "Ngày lên đơn" },
-    { key: "status", label: "Trạng thái đơn" },
-    { key: "paymentMethod", label: "Hình thức TT" },
-  ];
-
-  // Column order state for drag and drop
-  const [columnOrder, setColumnOrder] = useState([
-    "stt",
-    "orderCode",
-    "customerName",
-    "phone",
-    "address",
-    "product",
-    "quantity",
-    "price",
-    "totalVND",
-    "marketing",
-    "sale",
-    "team",
-    "shift",
-    "orderDate",
-    "status",
-    "paymentMethod",
-  ]);
-
-  // Drag and drop handlers
-  const [draggedColumn, setDraggedColumn] = useState(null);
-  const [dropTarget, setDropTarget] = useState(null);
-  const [isReordering, setIsReordering] = useState(false);
-
-  const [showSuccessRipple, setShowSuccessRipple] = useState(false);
-  const [ripplePosition, setRipplePosition] = useState({ x: 0, y: 0 });
-  const [selectedRows, setSelectedRows] = useState(new Set());
-  const [sortConfig, setSortConfig] = useState({
-    column: "orderDate",
-    direction: "desc",
-  });
-
-  // Check if user can edit status - All roles can edit
-  const canEditStatus = true;
-
-  // Check if user can edit full order details - All roles can edit
-  const canEditFullOrder = true;
-
-  // Helper function to get status styling
-  const getStatusStyle = (status) => {
-    switch (status) {
-      case "Đơn hợp lệ":
-        return "bg-green-100 text-green-800";
-      case "Đơn hủy":
-        return "bg-red-100 text-red-800";
-      case "Đơn chờ xử lý":
-        return "bg-yellow-100 text-yellow-800";
-      case "Chưa xác định":
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
-  // Log change function
-  const logChange = async (
-    orderId,
-    changeType,
-    oldValue,
-    newValue,
-    orderData = null
-  ) => {
-    try {
-      const changeLogsUrl =
-        "https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/ChangeLog.json";
-
-      const logData = {
-        orderId,
-        changeType, // 'status_change', 'full_update', 'revert_status', 'revert_full_update'
-        oldValue,
-        newValue,
-        userEmail,
-        userRole,
-        timestamp: new Date().toISOString(),
-        orderCode: orderData ? orderData["Mã đơn hàng"] : null,
-        customerName: orderData
-          ? orderData["Name*"] || orderData["Tên lên đơn"]
-          : null,
-        reverted: false, // Thêm trường để track trạng thái hoàn tác
-      };
-
-      await fetch(changeLogsUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(logData),
-      });
-    } catch (error) {
-      console.error("Error logging change:", error);
-      // Don't throw error to avoid breaking the main update flow
-    }
-  };
-
-  // Helper to get column cell string value by columnKey (used for A-Z filtering)
-  const getColumnValue = (item, columnKey) => {
-    switch (columnKey) {
-      case "stt":
-        return "";
-      case "orderCode":
-        return item["Mã đơn hàng"] || "";
-      case "customerName":
-        return item["Name*"] || item["Tên lên đơn"] || "";
-      case "phone":
-        return item["Phone*"] || "";
-      case "address":
-        return [item["Add"], item["City"], item["State"]]
-          .filter(Boolean)
-          .join(", ");
-      case "product":
-        return item["Mặt hàng"] || item["Tên mặt hàng 1"] || "";
-      case "quantity":
-        return String(item["Số lượng mặt hàng 1"] || "");
-      case "price":
-        return String(item["Giá bán"] || "");
-      case "totalVND":
-        return String(item["Tổng tiền VNĐ"] || "");
-      case "marketing":
-        return item["Nhân viên Marketing"] || "";
-      case "sale":
-        return item["Nhân viên Sale"] || "";
-      case "team":
-        return item["Team"] || "";
-      case "shift":
-        return item["Ca"] || "";
-      case "orderDate":
-        return item["Ngày lên đơn"]
-          ? new Date(item["Ngày lên đơn"]).toLocaleDateString("vi-VN")
-          : "";
-      case "status":
-        return item["Trạng thái đơn"] || "";
-      case "paymentMethod":
-        return item["Hình thức thanh toán"] || "";
-      default:
-        return "";
-    }
-  };
-
-  const toggleSort = (columnKey) => {
-    setSortConfig((prev) => {
-      if (prev.column !== columnKey)
-        return { column: columnKey, direction: "asc" };
-      if (prev.direction === "asc")
-        return { column: columnKey, direction: "desc" };
-      return { column: null, direction: null };
-    });
-    setCurrentPage(1);
-  };
-
-  // Toggle column visibility
-  const toggleColumn = (columnKey) => {
-    setVisibleColumns((prev) => ({
-      ...prev,
-      [columnKey]: !prev[columnKey],
-    }));
-  };
-
-  // Select all columns
-  const selectAllColumns = () => {
-    const allVisible = {};
-    Object.keys(visibleColumns).forEach((key) => {
-      allVisible[key] = true;
-    });
-    setVisibleColumns(allVisible);
-  };
-
-  // Deselect all columns
-  const deselectAllColumns = () => {
-    const allHidden = {};
-    Object.keys(visibleColumns).forEach((key) => {
-      allHidden[key] = false;
-    });
-    setVisibleColumns(allHidden);
-  };
-
-  // Drag and drop handlers
-  const handleDragStart = (e, columnKey) => {
-    setDraggedColumn(columnKey);
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", columnKey);
-
-    // Create custom drag image
-    const dragImage = e.target.cloneNode(true);
-    dragImage.style.position = "absolute";
-    dragImage.style.top = "-1000px";
-    dragImage.style.opacity = "0.8";
-    dragImage.style.transform = "rotate(5deg)";
-    document.body.appendChild(dragImage);
-    e.dataTransfer.setDragImage(
-      dragImage,
-      e.target.offsetWidth / 2,
-      e.target.offsetHeight / 2
-    );
-
-    // Add visual feedback for dragged element
-    setTimeout(() => {
-      const draggedElement = e.target;
-      draggedElement.style.opacity = "0.3";
-      draggedElement.style.transform = "scale(1.1) rotate(3deg)";
-      draggedElement.style.boxShadow = "0 10px 30px rgba(0,0,0,0.4)";
-      draggedElement.style.zIndex = "1000";
-
-      // Remove the temporary drag image
-      document.body.removeChild(dragImage);
-    }, 0);
-  };
-
-  const handleDragOver = (e, columnKey) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-
-    // Set drop target for visual feedback
-    if (columnKey !== draggedColumn) {
-      setDropTarget(columnKey);
-    }
-  };
-
-  const handleDragLeave = (e) => {
-    // Clear drop target when leaving
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX;
-    const y = e.clientY;
-
-    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-      setDropTarget(null);
-    }
-  };
-
-  const handleDrop = (e, targetColumnKey) => {
-    e.preventDefault();
-
-    if (!draggedColumn || draggedColumn === targetColumnKey) {
-      setDraggedColumn(null);
-      setDropTarget(null);
-      return;
-    }
-
-    // Get drop position for ripple effect
-    const rect = e.currentTarget.getBoundingClientRect();
-    setRipplePosition({
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    });
-    setShowSuccessRipple(true);
-
-    // Add a small delay for visual feedback
-    setTimeout(() => {
-      const newOrder = [...columnOrder];
-      const draggedIndex = newOrder.indexOf(draggedColumn);
-      const targetIndex = newOrder.indexOf(targetColumnKey);
-
-      // Remove dragged column and insert at new position
-      newOrder.splice(draggedIndex, 1);
-      newOrder.splice(targetIndex, 0, draggedColumn);
-
-      setColumnOrder(newOrder);
-      setDraggedColumn(null);
-      setDropTarget(null);
-
-      // Reset ripple effect
-      setTimeout(() => {
-        setShowSuccessRipple(false);
-      }, 300);
-    }, 150);
-  };
-
-  const handleDragEnd = (e) => {
-    // Reset visual feedback
-    const draggedElement = e.target;
-    draggedElement.style.opacity = "";
-    draggedElement.style.transform = "";
-    draggedElement.style.boxShadow = "";
-    draggedElement.style.zIndex = "";
-
-    setDraggedColumn(null);
-    setDropTarget(null);
-  };
-
-  // Fetch F3 data
-  const [f3Data, setF3Data] = useState([]);
-  const [humanResources, setHumanResources] = useState([]);
-
+  // Debounce filter updates
   useEffect(() => {
-    const fetchData = async () => {
+    const timeoutId = setTimeout(() => {
+      setFilterValues(localFilterValues);
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [localFilterValues]);
+
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [enableDateFilter, setEnableDateFilter] = useState(false);
+  const [quickFilter, setQuickFilter] = useState('');
+  const [fixedColumns, setFixedColumns] = useState(2);
+  const [showColumnSettings, setShowColumnSettings] = useState(false);
+  
+  // Column visibility state
+  const [visibleColumns, setVisibleColumns] = useState(() => {
+    const saved = localStorage.getItem('vanDon_visibleColumns');
+    if (saved) {
       try {
-        setLoading(true);
-
-        // Fetch F3 data from direct URL
-        const F3_URL =
-          "https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/F3.json";
-        const f3Response = await fetch(F3_URL);
-        const f3DataRaw = await f3Response.json();
-
-        if (Array.isArray(f3DataRaw)) {
-          const dataArray = f3DataRaw.map((item, index) => ({
-            id: index.toString(),
-            ...item,
-          }));
-          setF3Data(dataArray);
-        } else if (f3DataRaw && typeof f3DataRaw === "object") {
-          // Handle object format where keys are IDs
-          const dataArray = Object.entries(f3DataRaw).map(([key, value]) => ({
-            id: key,
-            ...value,
-          }));
-          setF3Data(dataArray);
-        } else {
-          setF3Data([]);
-        }
-
-        // Fetch human resources data from direct URL
-        const HR_URL =
-          "https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/Nh%C3%A2n_s%E1%BB%B1.json";
-        const hrResponse = await fetch(HR_URL);
-        const hrDataRaw = await hrResponse.json();
-
-        if (Array.isArray(hrDataRaw)) {
-          const hrArray = hrDataRaw.map((item, index) => ({
-            id: index.toString(),
-            ...item,
-          }));
-          setHumanResources(hrArray);
-        } else {
-          setHumanResources([]);
-        }
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Error parsing saved columns:', e);
       }
-    };
+    }
+    // Initialize with all columns visible
+    const initial = {};
+    const cols = viewMode === 'ORDER_MANAGEMENT' ? ORDER_MGMT_COLUMNS : BILL_LADING_COLUMNS;
+    cols.forEach(col => {
+      initial[col] = true;
+    });
+    return initial;
+  });
 
-    fetchData();
+  // --- Order Mgmt Specific State ---
+  const [omActiveTeam, setOmActiveTeam] = useState('all');
+  const [omDateType, setOmDateType] = useState('Ngày đóng hàng');
+  const [omShowTracking, setOmShowTracking] = useState(false);
+  const [omShowDuplicateTracking, setOmShowDuplicateTracking] = useState(false);
+
+  // --- Bill of Lading Specific State ---
+  const [bolActiveTab, setBolActiveTab] = useState('all'); // all, japan, hcm, hanoi
+  const [bolDateType, setBolDateType] = useState('Ngày lên đơn');
+  const [isLongTextExpanded, setIsLongTextExpanded] = useState(false);
+
+  // --- Pagination ---
+  const [currentPage, setCurrentPage] = useState(1);
+  const [rowsPerPage, setRowsPerPage] = useState(50);
+
+  // --- Selection & Clipboard ---
+  const [selection, setSelection] = useState({
+    startRow: null, startCol: null, endRow: null, endCol: null
+  });
+  const [copiedData, setCopiedData] = useState(null);
+  const [copiedSelection, setCopiedSelection] = useState(null);
+  const isSelecting = useRef(false);
+  const tableRef = useRef(null);
+
+  // --- MGT Noi Bo specific ---
+  const [mgtNoiBoOrder, setMgtNoiBoOrder] = useState([]);
+
+  // --- Update Queue & Debounce ---
+  const updateQueue = useRef(new Map()); // orderId -> { changes: Map, hasDelete: boolean, timeout?: ReturnType<typeof setTimeout> }
+
+  // --- Toasts ---
+  const [toasts, setToasts] = useState([]);
+  const toastIdCounter = useRef(0);
+
+  // --- Initialize ---
+  useEffect(() => {
+    loadData();
+    const storedChanges = localStorage.getItem('speegoPendingChanges');
+    if (storedChanges) {
+      try {
+        const parsed = JSON.parse(storedChanges);
+        const map = new Map();
+        for (const id in parsed) {
+          const innerMap = new Map();
+          for (const key in parsed[id]) {
+            innerMap.set(key, parsed[id][key]);
+          }
+          map.set(id, innerMap);
+        }
+        setLegacyChanges(map);
+      } catch (e) {
+        console.error("Error loading pending changes", e);
+      }
+    }
   }, []);
 
-  // Filtered F3 data with memoization
-  const filteredF3Data = useMemo(() => {
-    let filtered = [...f3Data];
-
-    // Role-based access control
-    if (userRole === "admin") {
-      // Admin: see all data
-      // No filtering
-    } else if (userRole === "leader") {
-      // Leader: get list of team members from HR data, then filter orders by those names
-      const teamMembers = humanResources
-        .filter((hr) => {
-          const team = hr["Team"] || hr["Team Sale_mar"] || "";
-          return team.toLowerCase().includes(userTeam.toLowerCase());
-        })
-        .map((hr) => hr["Họ Và Tên"] || hr["Name"] || hr["Tên"] || "")
-        .filter((name) => name.trim() !== "");
-
-      filtered = filtered.filter((item) => {
-        const marketing = item["Nhân viên Marketing"] || "";
-        const sale = item["Nhân viên Sale"] || "";
-        const matches = teamMembers.some(
-          (member) =>
-            marketing.toLowerCase().includes(member.toLowerCase()) ||
-            sale.toLowerCase().includes(member.toLowerCase())
-        );
-        return matches;
-      });
-    } else if (userRole === "user") {
-      // User: only see their own data (match by name in NV Marketing or NV Sale)
-      // Find user's real name from HR data using email
-      const userRecord = humanResources.find((hr) => hr.email === userEmail);
-      const userName = userRecord
-        ? userRecord["Họ Và Tên"]
-        : userEmail.split("@")[0]; // Fallback to email prefix if not found
-
-      filtered = filtered.filter((item) => {
-        const marketing = item["Nhân viên Marketing"] || "";
-        const sale = item["Nhân viên Sale"] || "";
-        const matches =
-          marketing.toLowerCase().includes(userName.toLowerCase()) ||
-          sale.toLowerCase().includes(userName.toLowerCase());
-        return matches;
-      });
-    } else {
-      // Other roles: no access
-      filtered = [];
-    }
-
-    // Search text filter (tìm kiếm toàn văn trong tất cả các trường)
-    if (filters.searchText) {
-      const searchLower = filters.searchText.toLowerCase();
-      filtered = filtered.filter((item) => {
-        // Tìm kiếm trong tất cả các trường có thể có của item
-        const allFields = Object.values(item).filter(
-          (value) => value != null && value !== ""
-        );
-        return allFields.some((field) =>
-          String(field).toLowerCase().includes(searchLower)
-        );
-      });
-    }
-
-    // Date filter - using 'Ngày lên đơn'
-    if (filters.startDate || filters.endDate) {
-      filtered = filtered.filter((item) => {
-        const dateStr = item["Ngày lên đơn"];
-        if (!dateStr) return true; // Keep records without dates
-
-        try {
-          // Try parsing as ISO date or Vietnamese format
-          let itemDate;
-          if (dateStr.includes("/")) {
-            const parts = dateStr.split("/");
-            if (parts.length !== 3) return true;
-            itemDate = new Date(parts[2], parts[1] - 1, parts[0]);
-          } else {
-            itemDate = new Date(dateStr);
-          }
-
-          if (isNaN(itemDate.getTime())) return true;
-
-          if (filters.startDate) {
-            const start = new Date(filters.startDate);
-            start.setHours(0, 0, 0, 0);
-            if (itemDate < start) return false;
-          }
-
-          if (filters.endDate) {
-            const end = new Date(filters.endDate);
-            end.setHours(23, 59, 59, 999);
-            if (itemDate > end) return false;
-          }
-
-          return true;
-        } catch (e) {
-          return true;
-        }
-      });
-    }
-
-    // Product filter - match with 'Mặt hàng' or 'Tên mặt hàng 1'
-    if (filters.products && filters.products.length > 0) {
-      filtered = filtered.filter((item) => {
-        const product = item["Mặt hàng"] || item["Tên mặt hàng 1"];
-        return filters.products.some(
-          (p) =>
-            product &&
-            String(product)
-              .toLowerCase()
-              .includes(String(p || "").toLowerCase())
-        );
-      });
-    }
-
-    // Shift filter - match with 'Ca'
-    if (filters.shifts && filters.shifts.length > 0) {
-      filtered = filtered.filter((item) => filters.shifts.includes(item["Ca"]));
-    }
-
-    // Market filter - can be inferred from address or stored separately
-    if (filters.markets && filters.markets.length > 0) {
-      filtered = filtered.filter((item) => {
-        const market = item["Thị trường"] || item["Market"];
-        return filters.markets.some(
-          (m) =>
-            market &&
-            String(market)
-              .toLowerCase()
-              .includes(String(m || "").toLowerCase())
-        );
-      });
-    }
-
-    // Team filter
-    if (filters.teams && filters.teams.length > 0) {
-      filtered = filtered.filter((item) =>
-        filters.teams.includes(item["Team"])
-      );
-    }
-
-    // Payment method filter (supports array of selected methods)
-    if (
-      Array.isArray(filters.paymentMethod) &&
-      filters.paymentMethod.length > 0
-    ) {
-      const lowers = filters.paymentMethod.map((p) =>
-        String(p || "").toLowerCase()
-      );
-      filtered = filtered.filter((item) => {
-        const method =
-          item["Hình thức thanh toán"] || item["Hình thức TT"] || "";
-        const m = String(method).toLowerCase();
-        return lowers.some((l) => m.includes(l));
-      });
-    } else if (
-      filters.paymentMethod &&
-      typeof filters.paymentMethod === "string"
-    ) {
-      // backward-compat: single-string filter
-      const payLower = String(filters.paymentMethod).toLowerCase();
-      filtered = filtered.filter((item) => {
-        const method =
-          item["Hình thức thanh toán"] || item["Hình thức TT"] || "";
-        return String(method).toLowerCase().includes(payLower);
-      });
-    }
-
-    return filtered;
-  }, [f3Data, filters, userRole, userEmail, userTeam, humanResources]);
-
-  // Sync local data with filtered data when filters change
+  // --- Global Keyboard Shortcuts (Ctrl+Enter) for Bill of Lading ---
   useEffect(() => {
-    setLocalF3Data(filteredF3Data);
-  }, [filteredF3Data]);
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (openStatusDropdown && !event.target.closest(".relative")) {
-        setOpenStatusDropdown(null);
+    const handleKeyDown = (e) => {
+      if (viewMode === 'BILL_OF_LADING' && e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        setIsLongTextExpanded(prev => {
+          const newState = !prev;
+          addToast(newState ? "Đã mở rộng ô văn bản" : "Đã thu gọn ô văn bản", 'info', 1500);
+          return newState;
+        });
       }
     };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [viewMode]);
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+  // --- Toast Helpers ---
+  const addToast = useCallback((message, type = 'info', duration = 3000) => {
+    const id = ++toastIdCounter.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    if (duration > 0) {
+      setTimeout(() => removeToast(id), duration);
+    }
+    return id;
+  }, []);
+
+  const removeToast = useCallback((id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // --- Helper Functions ---
+  const extractDateFromDateTime = (dateTimeString) => {
+    if (!dateTimeString) return '';
+    const str = String(dateTimeString).trim();
+    if (str.includes(' ')) {
+      const [d, m, y] = str.split(' ')[0].split('/').map(Number);
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    }
+    return str;
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    try {
+      const date = new Date(dateString.includes('Z') ? dateString : dateString + 'Z');
+      if (isNaN(date.getTime())) return dateString;
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = date.getFullYear();
+      return `${day}/${month}/${year}`;
+    } catch (e) {
+      return dateString;
+    }
+  };
+
+  // --- Data Loading ---
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      console.log('Starting data load...');
+      const data = await API.fetchOrders();
+      setAllData(data);
+
+      if (data.length === 2 && data[0]["Mã đơn hàng"] === "DEMO001") {
+        addToast('⚠️ Đang sử dụng dữ liệu demo do API lỗi. Kiểm tra kết nối mạng.', 'error', 8000);
+      } else {
+        addToast(`✅ Đã tải ${data.length} đơn hàng`, 'success', 2000);
+      }
+
+      // Load MGT Noi Bo orders
+      try {
+        const mgtOrder = await API.fetchMGTNoiBoOrders();
+        setMgtNoiBoOrder(mgtOrder);
+      } catch (e) {
+        console.error('Error loading MGT Noi Bo orders:', e);
+      }
+    } catch (error) {
+      console.error('Load data error:', error);
+      addToast(`❌ Lỗi tải dữ liệu: ${error.message}. Vui lòng thử lại.`, 'error', 8000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshData = async () => {
+    setPendingChanges(new Map());
+    // Reset tất cả filter values về default
+    const defaultFilters = {
+      market: [],
+      product: [],
+      tracking_include: '',
+      tracking_exclude: ''
     };
-  }, [openStatusDropdown]);
-
-  // Paginate filtered data (apply sorting before pagination)
-  const paginatedF3Data = useMemo(() => {
-    let source = [...localF3Data];
-
-    // Apply sorting if requested
-    if (sortConfig && sortConfig.column) {
-      const { column, direction } = sortConfig;
-
-      const collator = new Intl.Collator("vi", {
-        sensitivity: "base",
-        numeric: true,
-      });
-
-      source.sort((a, b) => {
-        const va = String(getColumnValue(a, column) || "").trim();
-        const vb = String(getColumnValue(b, column) || "").trim();
-
-        // Special handling for dates
-        if (column === "orderDate") {
-          const da = va ? new Date(va) : new Date(0);
-          const db = vb ? new Date(vb) : new Date(0);
-          return da - db;
-        }
-
-        // Try numeric comparison
-        const na = Number(va.toString().replace(/[^0-9.-]+/g, ""));
-        const nb = Number(vb.toString().replace(/[^0-9.-]+/g, ""));
-        if (
-          !Number.isNaN(na) &&
-          !Number.isNaN(nb) &&
-          va.match(/[0-9]/) &&
-          vb.match(/[0-9]/)
-        ) {
-          return na - nb;
-        }
-
-        // Fallback to locale string compare
-        return collator.compare(va, vb);
-      });
-
-      if (direction === "desc") source.reverse();
-    }
-
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return source.slice(startIndex, endIndex);
-  }, [localF3Data, currentPage, itemsPerPage, sortConfig]);
-
-  const totalPages = Math.ceil(localF3Data.length / itemsPerPage);
-
-  // Handle page change
-  const handlePageChange = (page) => {
-    setCurrentPage(page);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  // Calculate summary stats
-  const stats = useMemo(
-    () => ({
-      totalOrders: localF3Data.length,
-      totalRevenue: localF3Data.reduce(
-        (sum, item) => sum + (item["Tổng tiền VNĐ"] || 0),
-        0
-      ),
-      validOrders: localF3Data.filter(
-        (item) => item["Trạng thái đơn"] === "Đơn hợp lệ"
-      ).length,
-      avgOrderValue:
-        localF3Data.length > 0
-          ? localF3Data.reduce(
-              (sum, item) => sum + (item["Tổng tiền VNĐ"] || 0),
-              0
-            ) / localF3Data.length
-          : 0,
-    }),
-    [localF3Data]
-  );
-
-  const clearFilters = () => {
-    setFilters({
-      startDate: "",
-      endDate: "",
-      products: [],
-      shifts: [],
-      // markets removed
-      teams: [],
-      paymentMethod: [],
-      searchText: "",
-    });
+    setFilterValues(defaultFilters);
+    setLocalFilterValues(defaultFilters);
+    setDateFrom('');
+    setDateTo('');
     setCurrentPage(1);
+    await loadData();
   };
 
-  // Load available filters from f3Data (full dataset, not filtered)
+  const savePendingToLocalStorage = (newPending, newLegacy) => {
+    const changesToSave = {};
+    const merge = new Map([...newLegacy, ...newPending]);
+
+    merge.forEach((val, id) => {
+      changesToSave[id] = Object.fromEntries(val);
+    });
+    localStorage.setItem('speegoPendingChanges', JSON.stringify(changesToSave));
+  };
+
+  const getSelectionBounds = useCallback(() => {
+    if (selection.startRow === null || selection.startCol === null) return null;
+    return {
+      minRow: Math.min(selection.startRow, selection.endRow),
+      maxRow: Math.max(selection.startRow, selection.endRow),
+      minCol: Math.min(selection.startCol, selection.endCol),
+      maxCol: Math.max(selection.startCol, selection.endCol)
+    };
+  }, [selection]);
+
+  const selectionBounds = useMemo(() => getSelectionBounds(), [getSelectionBounds]);
+
+  const copiedBounds = useMemo(() => {
+    if (!copiedSelection) return null;
+    return {
+      minRow: Math.min(copiedSelection.startRow, copiedSelection.endRow),
+      maxRow: Math.max(copiedSelection.startRow, copiedSelection.endRow),
+      minCol: Math.min(copiedSelection.startCol, copiedSelection.endCol),
+      maxCol: Math.max(copiedSelection.startCol, copiedSelection.endCol)
+    };
+  }, [copiedSelection]);
+
+  // --- Filtering Logic ---
+  const allColumns = viewMode === 'ORDER_MANAGEMENT' ? ORDER_MGMT_COLUMNS : BILL_LADING_COLUMNS;
+  const currentColumns = useMemo(() => {
+    return allColumns.filter(col => visibleColumns[col] === true);
+  }, [allColumns, visibleColumns]);
+
+  // Save column visibility to localStorage
   useEffect(() => {
-    if (f3Data.length > 0) {
-      const productsSet = new Set();
-      const teamsSet = new Set();
-      const shiftsSet = new Set();
-      const paymentMethodsSet = new Set();
-
-      f3Data.forEach((item) => {
-        if (item["Mặt hàng"]) productsSet.add(String(item["Mặt hàng"]).trim());
-        if (item["Team"]) teamsSet.add(String(item["Team"]).trim());
-        if (item["Ca"]) shiftsSet.add(String(item["Ca"]).trim());
-        if (item["Hình thức thanh toán"])
-          paymentMethodsSet.add(String(item["Hình thức thanh toán"]).trim());
-      });
-
-      setAvailableFilters({
-        products: Array.from(productsSet).sort(),
-        shifts: Array.from(shiftsSet).sort(),
-        teams: Array.from(teamsSet).sort(),
-        paymentMethods: Array.from(paymentMethodsSet).sort(),
-      });
+    if (Object.keys(visibleColumns).length > 0) {
+      localStorage.setItem('vanDon_visibleColumns', JSON.stringify(visibleColumns));
     }
-  }, [f3Data]);
+  }, [visibleColumns]);
 
-  // Handle filter value change (checkbox toggles and simple values)
-  const handleFilterChange = (filterType, value) => {
-    setFilters((prev) => {
-      // If caller passed a full array, replace directly
-      if (Array.isArray(value)) {
-        return { ...prev, [filterType]: value };
-      }
-
-      // If the existing filter is an array, toggle the single value
-      if (Array.isArray(prev[filterType])) {
-        const newValues = prev[filterType].includes(value)
-          ? prev[filterType].filter((v) => v !== value)
-          : [...prev[filterType], value];
-        return { ...prev, [filterType]: newValues };
-      }
-
-      // Otherwise set simple value
-      return { ...prev, [filterType]: value };
-    });
-    setCurrentPage(1);
-  };
-
-  // Handle quick date range selection
-  const handleQuickDateSelect = (e) => {
-    const value = e.target ? e.target.value : e;
-    setQuickSelectValue(value);
-    if (!value) return;
+  // Handle quick filter
+  const handleQuickFilter = (value) => {
+    setQuickFilter(value);
+    if (!value) {
+      setDateFrom('');
+      setDateTo('');
+      setEnableDateFilter(false);
+      return;
+    }
 
     const today = new Date();
     let startDate = new Date();
     let endDate = new Date();
 
     switch (value) {
-      case "today":
+      case 'today':
         startDate = new Date(today);
         endDate = new Date(today);
         break;
-      case "yesterday":
+      case 'yesterday':
         startDate = new Date(today);
         startDate.setDate(today.getDate() - 1);
         endDate = new Date(startDate);
         break;
-      case "last-week":
-        const lastWeekStart = new Date(today);
-        lastWeekStart.setDate(today.getDate() - today.getDay() - 7);
-        const lastWeekEnd = new Date(lastWeekStart);
-        lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
-        startDate = lastWeekStart;
-        endDate = lastWeekEnd;
+      case 'this-week': {
+        const dayOfWeek = today.getDay();
+        const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+        startDate = new Date(today.getFullYear(), today.getMonth(), diff);
+        endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + 6);
         break;
-      case "this-week":
-        const thisWeekStart = new Date(today);
-        thisWeekStart.setDate(today.getDate() - today.getDay());
-        const thisWeekEnd = new Date(thisWeekStart);
-        thisWeekEnd.setDate(thisWeekStart.getDate() + 6);
-        startDate = thisWeekStart;
-        endDate = thisWeekEnd;
+      }
+      case 'last-week': {
+        const dayOfWeek = today.getDay();
+        const diff = today.getDate() - dayOfWeek - 6 + (dayOfWeek === 0 ? -6 : 1);
+        startDate = new Date(today.getFullYear(), today.getMonth(), diff);
+        endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + 6);
         break;
-      case "next-week":
-        const nextWeekStart = new Date(today);
-        nextWeekStart.setDate(today.getDate() - today.getDay() + 7);
-        const nextWeekEnd = new Date(nextWeekStart);
-        nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
-        startDate = nextWeekStart;
-        endDate = nextWeekEnd;
-        break;
-      case "this-month":
+      }
+      case 'this-month':
         startDate = new Date(today.getFullYear(), today.getMonth(), 1);
         endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
         break;
-      default:
-        if (value && value.startsWith("month-")) {
-          const month = parseInt(value.split("-")[1]) - 1;
-          startDate = new Date(today.getFullYear(), month, 1);
-          endDate = new Date(today.getFullYear(), month + 1, 0);
-        } else if (
-          value === "q1" ||
-          value === "q2" ||
-          value === "q3" ||
-          value === "q4"
-        ) {
-          const year = today.getFullYear();
-          if (value === "q1") {
-            startDate = new Date(year, 0, 1);
-            endDate = new Date(year, 2, 31);
-          }
-          if (value === "q2") {
-            startDate = new Date(year, 3, 1);
-            endDate = new Date(year, 5, 30);
-          }
-          if (value === "q3") {
-            startDate = new Date(year, 6, 1);
-            endDate = new Date(year, 8, 30);
-          }
-          if (value === "q4") {
-            startDate = new Date(year, 9, 1);
-            endDate = new Date(year, 11, 31);
-          }
-        }
+      case 'last-month':
+        startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        endDate = new Date(today.getFullYear(), today.getMonth(), 0);
         break;
+      case 'this-year':
+        startDate = new Date(today.getFullYear(), 0, 1);
+        endDate = new Date(today.getFullYear(), 11, 31);
+        break;
+      default:
+        return;
     }
 
-    setFilters((prev) => ({
-      ...prev,
-      startDate: startDate.toISOString().split("T")[0],
-      endDate: endDate.toISOString().split("T")[0],
-    }));
+    setDateFrom(startDate.toISOString().split('T')[0]);
+    setDateTo(endDate.toISOString().split('T')[0]);
+    setEnableDateFilter(true);
   };
 
-  // Quick update order status directly from dropdown
-  const handleQuickStatusChange = async (orderId, newStatus) => {
-    try {
-      // Find the current order to get old status
-      const currentOrder = localF3Data.find((item) => item.id === orderId);
-      const oldStatus = currentOrder ? currentOrder["Trạng thái đơn"] : null;
+  // --- UI Helpers ---
+  const getUniqueValues = useMemo(() => (key) => {
+    const values = new Set();
+    const keyMapped = COLUMN_MAPPING[key] || key;
+    allData.forEach(row => {
+      // Thử nhiều cách lấy giá trị
+      const val = String(row[key] || row[keyMapped] || row[key.replace(/ /g, '_')] || '').trim();
+      if (val) values.add(val);
+    });
+    return Array.from(values).sort();
+  }, [allData]);
 
-      // Note: this project stores canonical data in /datasheet/F3.json.
-      // The `/f3_data/<id>` path may not exist in this database. We persist
-      // changes directly to `/datasheet/F3` below instead.
+  const getMultiSelectOptions = (col) => {
+    const key = COLUMN_MAPPING[col] || col;
+    if (DROPDOWN_OPTIONS[col]) return ['__EMPTY__', ...DROPDOWN_OPTIONS[col]];
+    if (DROPDOWN_OPTIONS[key]) return ['__EMPTY__', ...DROPDOWN_OPTIONS[key]];
+    return ['__EMPTY__', ...getUniqueValues(col)];
+  };
 
-      // Log the change with full order data for oldValue
-      await logChange(
-        orderId,
-        "status_change",
-        currentOrder,
-        newStatus,
-        currentOrder
-      );
+  const getFilteredData = useMemo(() => {
+    let data = [...allData];
 
-      // Also persist status change to datasheet/F3
-      try {
-        const BASE_URL =
-          "https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app";
-        const F3_URL = `${BASE_URL}/datasheet/F3.json`;
-        const resp = await fetch(F3_URL);
-        const f3DataRaw = await resp.json();
+    // 1. Apply changes (Pending > Legacy > Original)
+    data = data.map(row => {
+      const orderId = row[PRIMARY_KEY_COLUMN];
+      let rowCopy = { ...row };
 
-        const orderCode = currentOrder
-          ? currentOrder["Mã đơn hàng"] || currentOrder["Mã đơn"] || currentOrder["Mã"]
-          : null;
+      // Computed columns
+      rowCopy["Ngày đẩy đơn"] = extractDateFromDateTime(row["Ngày Kế toán đối soát với FFM lần 2"]);
+      rowCopy["Ngày có mã tracking"] = extractDateFromDateTime(row["Ngày Kế toán đối soát với FFM lần 1"]);
 
-        if (Array.isArray(f3DataRaw)) {
-          const idx = f3DataRaw.findIndex((item) => {
-            if (!item) return false;
-            const code =
-              item["Mã đơn hàng"] || item["Mã đơn"] || item["Mã Đơn"] || item["OrderCode"] || item["Mã"];
-            return code && orderCode && String(code).trim() === String(orderCode).trim();
-          });
+      const legacy = legacyChanges.get(orderId);
+      if (legacy) {
+        legacy.forEach((info, key) => { rowCopy[key] = info.newValue; });
+      }
+      const pending = pendingChanges.get(orderId);
+      if (pending) {
+        pending.forEach((info, key) => { rowCopy[key] = info.newValue; });
+      }
+      return rowCopy;
+    });
 
-          if (idx !== -1) {
-            const entryUrl = `${BASE_URL}/datasheet/F3/${idx}.json`;
-            await fetch(entryUrl, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ "Trạng thái đơn": newStatus }),
-            });
-          }
-        } else if (f3DataRaw && typeof f3DataRaw === "object") {
-          const foundKey = Object.keys(f3DataRaw).find((k) => {
-            const item = f3DataRaw[k];
-            if (!item) return false;
-            const code =
-              item["Mã đơn hàng"] || item["Mã đơn"] || item["Mã Đơn"] || item["OrderCode"] || item["Mã"];
-            return code && orderCode && String(code).trim() === String(orderCode).trim();
-          });
+    if (viewMode === 'ORDER_MANAGEMENT') {
+      // --- ORDER MANAGEMENT FILTERING LOGIC ---
 
-          if (foundKey) {
-            const entryUrl = `${BASE_URL}/datasheet/F3/${foundKey}.json`;
-            await fetch(entryUrl, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ "Trạng thái đơn": newStatus }),
-            });
-          }
-        }
-      } catch (e) {
-        console.error("Failed to persist status to datasheet/F3 (non-fatal):", e);
+      // Filter by Carrier (MGT only)
+      data = data.filter(row => {
+        const carrier = row["Đơn vị vận chuyển"] || row["Đơn_vị_vận_chuyển"];
+        return carrier?.toString().toUpperCase() === "MGT";
+      });
+
+      // Team Filter
+      if (omActiveTeam === 'mgt_noi_bo') {
+        const orderedIds = new Set(mgtNoiBoOrder);
+        data = data.filter(row => orderedIds.has(row[PRIMARY_KEY_COLUMN]));
+      } else if (omActiveTeam !== 'all') {
+        data = data.filter(row => row[TEAM_COLUMN_NAME] === omActiveTeam);
       }
 
-      // Update both f3Data and localF3Data
-      setF3Data((prevData) =>
-        prevData.map((item) =>
-          item.id === orderId ? { ...item, "Trạng thái đơn": newStatus } : item
-        )
-      );
-      setLocalF3Data((prevData) =>
-        prevData.map((item) =>
-          item.id === orderId ? { ...item, "Trạng thái đơn": newStatus } : item
-        )
-      );
-
-      toast.success("Cập nhật trạng thái đơn thành công");
-      setOpenStatusDropdown(null);
-    } catch (err) {
-      console.error("Error updating order status:", err);
-      toast.error("Lỗi khi cập nhật trạng thái đơn");
-    }
-  };
-
-  // Toggle status dropdown
-  const toggleStatusDropdown = (orderId) => {
-    setOpenStatusDropdown(openStatusDropdown === orderId ? null : orderId);
-  };
-
-  // Open edit full order modal
-  const openEditFullOrder = (order) => {
-    setEditingFullOrder(order);
-    setEditFormData({
-      "Mã đơn hàng": order["Mã đơn hàng"] || "",
-      "Name*": order["Name*"] || order["Tên lên đơn"] || "",
-      "Phone*": order["Phone*"] || "",
-      Add: order["Add"] || "",
-      City: order["City"] || "",
-      State: order["State"] || "",
-      "Mặt hàng": order["Mặt hàng"] || order["Tên mặt hàng 1"] || "",
-      "Số lượng mặt hàng 1": order["Số lượng mặt hàng 1"] || "",
-      "Giá bán": order["Giá bán"] || "",
-      "Tổng tiền VNĐ": order["Tổng tiền VNĐ"] || "",
-      "Nhân viên Marketing": order["Nhân viên Marketing"] || "",
-      "Nhân viên Sale": order["Nhân viên Sale"] || "",
-      Team: order["Team"] || "",
-      Ca: order["Ca"] || "",
-      "Ngày lên đơn": order["Ngày lên đơn"] || "",
-      "Trạng thái đơn": order["Trạng thái đơn"] || "",
-      "Hình thức thanh toán": order["Hình thức thanh toán"] || "",
-    });
-  };
-
-  // Close edit full order modal
-  const closeEditFullOrder = () => {
-    setEditingFullOrder(null);
-    setEditFormData({
-      "Mã đơn hàng": "",
-      "Name*": "",
-      "Phone*": "",
-      Add: "",
-      City: "",
-      State: "",
-      "Mặt hàng": "",
-      "Số lượng mặt hàng 1": "",
-      "Giá bán": "",
-      "Tổng tiền VNĐ": "",
-      "Nhân viên Marketing": "",
-      "Nhân viên Sale": "",
-      Team: "",
-      Ca: "",
-      "Ngày lên đơn": "",
-      "Trạng thái đơn": "",
-      "Hình thức thanh toán": "",
-    });
-  };
-
-  const handleUpdateFullOrder = async () => {
-    if (!editingFullOrder) return;
-
-    try {
-      // Get the old values before updating
-      const oldValues = {
-        "Mã đơn hàng": editingFullOrder["Mã đơn hàng"] || "",
-        "Name*":
-          editingFullOrder["Name*"] || editingFullOrder["Tên lên đơn"] || "",
-        "Phone*": editingFullOrder["Phone*"] || "",
-        Add: editingFullOrder["Add"] || "",
-        City: editingFullOrder["City"] || "",
-        State: editingFullOrder["State"] || "",
-        "Mặt hàng":
-          editingFullOrder["Mặt hàng"] ||
-          editingFullOrder["Tên mặt hàng 1"] ||
-          "",
-        "Số lượng mặt hàng 1": editingFullOrder["Số lượng mặt hàng 1"] || "",
-        "Giá bán": editingFullOrder["Giá bán"] || "",
-        "Tổng tiền VNĐ": editingFullOrder["Tổng tiền VNĐ"] || "",
-        "Nhân viên Marketing": editingFullOrder["Nhân viên Marketing"] || "",
-        "Nhân viên Sale": editingFullOrder["Nhân viên Sale"] || "",
-        Team: editingFullOrder["Team"] || "",
-        Ca: editingFullOrder["Ca"] || "",
-        "Ngày lên đơn": editingFullOrder["Ngày lên đơn"] || "",
-        "Trạng thái đơn": editingFullOrder["Trạng thái đơn"] || "",
-        "Hình thức thanh toán": editingFullOrder["Hình thức thanh toán"] || "",
-      };
-
-      // Note: this project uses `/datasheet/F3.json` as the primary dataset.
-      // The `/f3_data/<id>` collection may be absent; we persist edits to
-      // `datasheet/F3` below to ensure changes survive a reload.
-
-      // Also persist changes to datasheet/F3 (the app reads from this URL on load)
-      try {
-        const BASE_URL =
-          "https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app";
-        const F3_URL = `${BASE_URL}/datasheet/F3.json`;
-        const resp = await fetch(F3_URL);
-        if (!resp.ok) throw new Error(`Failed to fetch datasheet (status ${resp.status})`);
-        const f3DataRaw = await resp.json();
-
-        // Determine order code to match entries. Prefer the original code
-        // from editingFullOrder, but also consider a changed code from the
-        // edit form data as a fallback.
-        const originalCode =
-          editingFullOrder["Mã đơn hàng"] || editingFullOrder["Mã đơn"] || editingFullOrder["Mã"] || null;
-        const newCode = editFormData["Mã đơn hàng"] || editFormData["Mã đơn"] || editFormData["Mã"] || null;
-        const tryCodes = [originalCode, newCode].filter(Boolean).map((c) => String(c).trim());
-
-        let patched = false;
-
-        if (Array.isArray(f3DataRaw)) {
-          for (const code of tryCodes) {
-            const idx = f3DataRaw.findIndex((item) => {
-              if (!item) return false;
-              const codeField =
-                item["Mã đơn hàng"] || item["Mã đơn"] || item["Mã Đơn"] || item["OrderCode"] || item["Mã"];
-              return codeField && String(codeField).trim() === code;
-            });
-            if (idx !== -1) {
-              const entryUrl = `${BASE_URL}/datasheet/F3/${idx}.json`;
-              const putResp = await fetch(entryUrl, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(editFormData),
-              });
-              if (!putResp.ok) throw new Error(`PATCH failed (status ${putResp.status})`);
-              patched = true;
-              break;
-            }
-          }
-        } else if (f3DataRaw && typeof f3DataRaw === "object") {
-          for (const code of tryCodes) {
-            const foundKey = Object.keys(f3DataRaw).find((k) => {
-              const item = f3DataRaw[k];
-              if (!item) return false;
-              const codeField =
-                item["Mã đơn hàng"] || item["Mã đơn"] || item["Mã Đơn"] || item["OrderCode"] || item["Mã"];
-              return codeField && String(codeField).trim() === code;
-            });
-            if (foundKey) {
-              const entryUrl = `${BASE_URL}/datasheet/F3/${foundKey}.json`;
-              const putResp = await fetch(entryUrl, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(editFormData),
-              });
-              if (!putResp.ok) throw new Error(`PATCH failed (status ${putResp.status})`);
-              patched = true;
-              break;
-            }
-          }
-        }
-
-        if (!patched) {
-          // If we couldn't find an existing entry to update, throw so the
-          // caller gets a failure notification. Creating a new entry could
-          // be done here, but that may duplicate records; prefer error.
-          throw new Error("Could not find matching datasheet/F3 entry to update");
-        }
-      } catch (e) {
-        console.error("Failed to persist to datasheet/F3 (fatal):", e);
-        toast.error("Lỗi khi ghi dữ liệu lên server — thay đổi chưa được lưu");
-        // Re-throw to allow outer catch to handle rollback or further logging
-        throw e;
-      }
-
-      // Log the full update with old values
-      await logChange(
-        editingFullOrder.id,
-        "full_update",
-        oldValues,
-        editFormData,
-        editingFullOrder
-      );
-
-      // Update both f3Data and localF3Data
-      setF3Data((prevData) =>
-        prevData.map((item) =>
-          item.id === editingFullOrder.id ? { ...item, ...editFormData } : item
-        )
-      );
-      setLocalF3Data((prevData) =>
-        prevData.map((item) =>
-          item.id === editingFullOrder.id ? { ...item, ...editFormData } : item
-        )
-      );
-
-      toast.success("Cập nhật vận đơn thành công");
-      closeEditFullOrder();
-    } catch (err) {
-      console.error("Error updating full order:", err);
-      toast.error("Lỗi khi cập nhật vận đơn");
-    }
-  };
-
-  // Row selection handlers
-  const toggleRowSelection = (rowId) => {
-    setSelectedRows((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(rowId)) {
-        newSet.delete(rowId);
+      // Mode View (Tracking)
+      if (omShowDuplicateTracking) {
+        const counts = new Map();
+        data.forEach(r => {
+          const code = String(r['Mã Tracking'] || '').trim();
+          if (code) counts.set(code, (counts.get(code) || 0) + 1);
+        });
+        data = data.filter(r => {
+          const code = String(r['Mã Tracking'] || '').trim();
+          return (counts.get(code) || 0) > 1;
+        });
+        data.sort((a, b) => String(a['Mã Tracking']).localeCompare(String(b['Mã Tracking'])));
       } else {
-        newSet.add(rowId);
+        data = data.filter(row => {
+          const code = String(row['Mã Tracking'] || '').trim();
+          return omShowTracking ? code !== '' : !code;
+        });
+        // Sort by STT
+        data.sort((a, b) => (Number(a['rowIndex'] || 0) - Number(b['rowIndex'] || 0)));
       }
-      return newSet;
-    });
-  };
 
-  const toggleSelectAllRows = () => {
-    const currentPageIds = paginatedF3Data.map((item) => item.id);
-    const allSelected = currentPageIds.every((id) => selectedRows.has(id));
-
-    if (allSelected) {
-      // Deselect all on current page
-      setSelectedRows((prev) => {
-        const newSet = new Set(prev);
-        currentPageIds.forEach((id) => newSet.delete(id));
-        return newSet;
-      });
     } else {
-      // Select all on current page
-      setSelectedRows((prev) => {
-        const newSet = new Set(prev);
-        currentPageIds.forEach((id) => newSet.add(id));
-        return newSet;
+      // --- BILL OF LADING FILTERING LOGIC ---
+
+      // Tab Logic - use early filtering to reduce dataset size
+      if (bolActiveTab === 'japan') {
+        data = data.filter(row => (row['Khu vực'] || row['khu vực']) === 'Nhật Bản');
+      } else if (bolActiveTab === 'hcm') {
+        data = data.filter(row => (row['Team'] === 'HCM' && !row['Đơn vị vận chuyển'] && row['Kết quả Check'] === 'OK'));
+      } else if (bolActiveTab === 'hanoi') {
+        data = data.filter(row => (row['Team'] === 'Hà Nội' && !row['Đơn vị vận chuyển'] && row['Kết quả Check'] === 'OK'));
+      }
+
+      // Sort by Date Desc - optimized with cached date parsing
+      data.sort((a, b) => {
+        const da = new Date(a["Ngày lên đơn"] || a["Thời gian lên đơn"] || 0).getTime();
+        const db = new Date(b["Ngày lên đơn"] || b["Thời gian lên đơn"] || 0).getTime();
+        return db - da;
       });
     }
-  };
 
-  const copySelectedRows = () => {
-    if (selectedRows.size === 0) {
-      toast.warning("Vui lòng chọn ít nhất một hàng để copy");
-      return;
+    // --- COMMON FILTERS ---
+    const activeDateType = viewMode === 'ORDER_MANAGEMENT' ? omDateType : bolDateType;
+
+    // Market & Product
+    if (filterValues.market.length > 0) {
+      const set = new Set(filterValues.market);
+      data = data.filter(row => set.has(row["Khu vực"] || row["khu vực"]));
+    }
+    if (filterValues.product.length > 0) {
+      const set = new Set(filterValues.product);
+      data = data.filter(row => set.has(row["Mặt hàng"]));
     }
 
-    // Get selected data
-    const selectedData = localF3Data.filter((item) =>
-      selectedRows.has(item.id)
-    );
+    // Date Range (only if enabled)
+    if (enableDateFilter) {
+      if (dateFrom) {
+        const d = new Date(dateFrom);
+        d.setHours(0, 0, 0, 0);
+        data = data.filter(row => {
+          const val = row[activeDateType];
+          if (!val) return false;
+          return new Date(val).getTime() >= d.getTime();
+        });
+      }
+      if (dateTo) {
+        const d = new Date(dateTo);
+        d.setHours(23, 59, 59, 999);
+        data = data.filter(row => {
+          const val = row[activeDateType];
+          if (!val) return false;
+          return new Date(val).getTime() <= d.getTime();
+        });
+      }
+    }
 
-    // Convert to CSV format
-    const headers = columnOrder.filter((col) => visibleColumns[col]);
-    const csvContent = [
-      headers
-        .map((col) => {
-          const columnLabels = {
-            stt: "STT",
-            orderCode: "Mã đơn hàng",
-            customerName: "Tên khách hàng",
-            phone: "Điện thoại",
-            address: "Địa chỉ",
-            product: "Mặt hàng",
-            quantity: "Số lượng",
-            price: "Giá bán",
-            totalVND: "Tổng tiền VNĐ",
-            marketing: "NV Marketing",
-            sale: "NV Sale",
-            team: "Team",
-            shift: "Ca",
-            orderDate: "Ngày lên đơn",
-            status: "Trạng thái đơn",
-            paymentMethod: "Hình thức TT",
-          };
-          return columnLabels[col] || col;
-        })
-        .join(","),
-      ...selectedData.map((item, index) =>
-        headers
-          .map((col) => {
-            switch (col) {
-              case "stt":
-                return index + 1;
-              case "orderCode":
-                return item["Mã đơn hàng"] || "";
-              case "customerName":
-                return `"${(item["Name*"] || item["Tên lên đơn"] || "").replace(
-                  /"/g,
-                  '""'
-                )}"`;
-              case "phone":
-                return item["Phone*"] || "";
-              case "address":
-                return `"${(
-                  [item["Add"], item["City"], item["State"]]
-                    .filter(Boolean)
-                    .join(", ") || ""
-                ).replace(/"/g, '""')}"`;
-              case "product":
-                return `"${(
-                  item["Mặt hàng"] ||
-                  item["Tên mặt hàng 1"] ||
-                  ""
-                ).replace(/"/g, '""')}"`;
-              case "quantity":
-                return item["Số lượng mặt hàng 1"] || "";
-              case "price":
-                return item["Giá bán"] || 0;
-              case "totalVND":
-                return item["Tổng tiền VNĐ"] || 0;
-              case "marketing":
-                return `"${(item["Nhân viên Marketing"] || "").replace(
-                  /"/g,
-                  '""'
-                )}"`;
-              case "sale":
-                return `"${(item["Nhân viên Sale"] || "").replace(
-                  /"/g,
-                  '""'
-                )}"`;
-              case "team":
-                return item["Team"] || "";
-              case "shift":
-                return item["Ca"] || "";
-              case "orderDate":
-                return item["Ngày lên đơn"]
-                  ? new Date(item["Ngày lên đơn"]).toLocaleDateString("vi-VN")
-                  : "";
-              case "status":
-                return item["Trạng thái đơn"] || "";
-              case "paymentMethod":
-                return item["Hình thức thanh toán"] || "";
-              default:
-                return "";
-            }
-          })
-          .join(",")
-      ),
-    ].join("\n");
+    // Column Filters (Text & Dropdown)
+    Object.entries(filterValues).forEach(([key, val]) => {
+      if (['market', 'product', 'tracking_include', 'tracking_exclude'].includes(key)) return;
+      if (Array.isArray(val) && val.length === 0) return;
+      if (typeof val === 'string' && val.trim() === '') return;
 
-    // Copy to clipboard
-    navigator.clipboard
-      .writeText(csvContent)
-      .then(() => {
-        toast.success(`Đã copy ${selectedRows.size} hàng vào clipboard`);
-        setSelectedRows(new Set()); // Clear selection after copy
-      })
-      .catch((err) => {
-        console.error("Failed to copy:", err);
-        toast.error("Lỗi khi copy dữ liệu");
+      // Tìm data key chính xác cho column này
+      const dataKey = COLUMN_MAPPING[key] || key;
+
+      data = data.filter(row => {
+        // Thử nhiều cách lấy giá trị từ row
+        let cellValue = row[dataKey] ?? row[key] ?? row[key.replace(/ /g, '_')] ?? row[dataKey.replace(/ /g, '_')] ?? '';
+        cellValue = String(cellValue).trim();
+
+        // Use exact match for dropdown columns in Bill of Lading, or specific cols in Order Mgmt
+        if (DROPDOWN_OPTIONS[dataKey] || DROPDOWN_OPTIONS[key] || ["Trạng thái giao hàng", "Kết quả check", "GHI CHÚ"].includes(dataKey)) {
+          const selected = val;
+          if (selected.length === 0) return true;
+          if (cellValue === '' && selected.includes('__EMPTY__')) return true;
+          return selected.includes(cellValue);
+        }
+
+        // Date columns logic
+        if (["Ngày lên đơn", "Ngày đóng hàng", "Ngày đẩy đơn", "Ngày có mã tracking"].includes(key)) {
+          if (!cellValue) return false;
+          const dVal = new Date(cellValue); dVal.setHours(0, 0, 0, 0);
+          const fVal = new Date(val); fVal.setHours(0, 0, 0, 0);
+          return dVal >= fVal;
+        }
+
+        // Text search - case insensitive, partial match
+        return cellValue.toLowerCase().includes(val.toLowerCase());
       });
-  };
+    });
 
-  // Modal state for delete confirmation
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteInProgress, setDeleteInProgress] = useState(false);
-
-  // Open delete confirmation modal (all roles can delete)
-  const handleDeleteSelectedOrders = () => {
-    if (selectedRows.size === 0) {
-      toast.warning("Vui lòng chọn ít nhất một vận đơn để xóa");
-      return;
-    }
-
-    setShowDeleteModal(true);
-  };
-
-  // Perform deletion after user confirms in modal (all roles can delete)
-  const performDeleteSelectedOrders = async () => {
-    setDeleteInProgress(true);
-    try {
-      const idsToDelete = Array.from(selectedRows);
-
-      const deletePromises = idsToDelete.map(async (id) => {
-        const order = localF3Data.find((item) => item.id === id) || null;
-
-        // Note: there is no /f3_data collection in this database. Deletion
-        // is performed on the canonical `/datasheet/F3` below.
-
-        // Xóa trong datasheet/F3
-        try {
-          const f3Url =
-            "https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/F3.json";
-          const resp = await fetch(f3Url);
-          const f3Data = await resp.json();
-
-          const orderCode = order
-            ? order["Mã đơn hàng"] || order["Mã đơn"]
-            : null;
-
-          if (Array.isArray(f3Data)) {
-            const idx = f3Data.findIndex((item) => {
-              if (!item) return false;
-              const code =
-                item["Mã đơn hàng"] ||
-                item["Mã đơn"] ||
-                item["Mã Đơn"] ||
-                item["OrderCode"] ||
-                item["Mã"];
-              return code && String(code).trim() === String(orderCode).trim();
-            });
-
-            if (idx !== -1) {
-              const entryUrl = `https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/F3/${idx}.json`;
-              await fetch(entryUrl, {
-                method: "DELETE",
-                headers: { "Content-Type": "application/json" },
-              });
-            }
-          } else if (f3Data && typeof f3Data === "object") {
-            const foundKey = Object.keys(f3Data).find((k) => {
-              const item = f3Data[k];
-              if (!item) return false;
-              const code =
-                item["Mã đơn hàng"] ||
-                item["Mã đơn"] ||
-                item["Mã Đơn"] ||
-                item["OrderCode"] ||
-                item["Mã"];
-              return code && String(code).trim() === String(orderCode).trim();
-            });
-
-            if (foundKey) {
-              const entryUrl = `https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/F3/${foundKey}.json`;
-              await fetch(entryUrl, {
-                method: "DELETE",
-                headers: { "Content-Type": "application/json" },
-              });
-            }
+    // Tracking Filters
+    if (filterValues.tracking_include || filterValues.tracking_exclude) {
+      const inc = filterValues.tracking_include.toLowerCase();
+      const exc = filterValues.tracking_exclude.toLowerCase();
+      data = data.filter(row => {
+        const code = String(row['Mã Tracking'] || '').trim().toLowerCase();
+        if (exc && code.includes(exc)) return false;
+        if (inc) {
+          if (inc.includes('\n')) {
+            const codes = new Set(inc.split('\n').map(t => t.trim()).filter(Boolean));
+            if (!codes.has(code)) return false;
+          } else {
+            if (!code.includes(inc)) return false;
           }
-        } catch (err) {
-          console.error(
-            "Delete: failed to delete from datasheet (non-fatal):",
-            err
-          );
         }
+        return true;
+      });
+    }
 
-        try {
-          await logChange(id, "delete", order, null, order);
-        } catch (e) {
-          console.error("Error logging deletion for", id, e);
+    return data;
+  }, [allData, legacyChanges, pendingChanges, viewMode, omActiveTeam, omDateType, omShowTracking, omShowDuplicateTracking, bolActiveTab, bolDateType, filterValues, dateFrom, dateTo, mgtNoiBoOrder]);
+
+  // --- Render Prep (moved up for dependencies) ---
+  // Use fewer rows for Bill of Lading due to long text columns
+  const effectiveRowsPerPage = viewMode === 'BILL_OF_LADING' ? 30 : rowsPerPage;
+
+  const paginatedData = useMemo(() => {
+    return getFilteredData.slice((currentPage - 1) * effectiveRowsPerPage, currentPage * effectiveRowsPerPage);
+  }, [getFilteredData, currentPage, effectiveRowsPerPage]);
+  const totalPages = Math.ceil(getFilteredData.length / effectiveRowsPerPage);
+
+  // --- Change Management (Shared) ---
+  const processUpdateQueue = useCallback(async (forceBulk) => {
+    const queue = updateQueue.current;
+    if (queue.size === 0) return;
+
+    const rowsToUpdate = [];
+    const queueEntries = Array.from(queue.entries());
+    queue.clear();
+
+    queueEntries.forEach(([orderId, data]) => {
+      const rowObj = { [PRIMARY_KEY_COLUMN]: orderId };
+      data.changes.forEach((info, key) => { rowObj[key] = info.newValue; });
+      rowsToUpdate.push(rowObj);
+    });
+
+    if (rowsToUpdate.length === 0) return;
+
+    if (!forceBulk && rowsToUpdate.length === 1 && Object.keys(rowsToUpdate[0]).length === 2) {
+      const row = rowsToUpdate[0];
+      const col = Object.keys(row).find(k => k !== PRIMARY_KEY_COLUMN);
+      try {
+        const toastId = addToast('Đang cập nhật...', 'loading', 0);
+        await API.updateSingleCell(row[PRIMARY_KEY_COLUMN], col, row[col]);
+        setAllData(prev => {
+          const idx = prev.findIndex(r => r[PRIMARY_KEY_COLUMN] === row[PRIMARY_KEY_COLUMN]);
+          if (idx > -1) {
+            const next = [...prev];
+            next[idx] = { ...next[idx], [col]: row[col] };
+            return next;
+          }
+          return prev;
+        });
+        setPendingChanges((prev) => {
+          const next = new Map(prev);
+          if (next.has(row[PRIMARY_KEY_COLUMN])) {
+            next.get(row[PRIMARY_KEY_COLUMN]).delete(col);
+            if (next.get(row[PRIMARY_KEY_COLUMN]).size === 0) next.delete(row[PRIMARY_KEY_COLUMN]);
+          }
+          savePendingToLocalStorage(next, legacyChanges);
+          return next;
+        });
+        removeToast(toastId);
+        addToast('Cập nhật thành công!', 'success');
+      } catch (e) {
+        addToast(e.message, 'error');
+      }
+    } else {
+      try {
+        const toastId = addToast(`Đang cập nhật ${rowsToUpdate.length} đơn hàng...`, 'loading', 0);
+        const res = await API.updateBatch(rowsToUpdate);
+        if (res.success) {
+          setAllData(prev => {
+            let next = [...prev];
+            rowsToUpdate.forEach(updatedRow => {
+              const idx = next.findIndex(r => r[PRIMARY_KEY_COLUMN] === updatedRow[PRIMARY_KEY_COLUMN]);
+              if (idx > -1) next[idx] = { ...next[idx], ...updatedRow };
+            });
+            return next;
+          });
+          setPendingChanges((prev) => {
+            const next = new Map(prev);
+            rowsToUpdate.forEach(r => {
+              const oid = r[PRIMARY_KEY_COLUMN];
+              if (next.has(oid)) {
+                Object.keys(r).forEach(k => { if (k !== PRIMARY_KEY_COLUMN) next.get(oid).delete(k); });
+                if (next.get(oid).size === 0) next.delete(oid);
+              }
+            });
+            savePendingToLocalStorage(next, legacyChanges);
+            return next;
+          });
+          removeToast(toastId);
+          addToast(`Đã cập nhật ${res.summary?.updated || rowsToUpdate.length} đơn hàng.`, 'success');
         }
+      } catch (e) {
+        addToast(e.message, 'error');
+      }
+    }
+  }, [addToast, removeToast, legacyChanges, savePendingToLocalStorage]);
+
+  const handleCellChange = useCallback((orderId, colKey, newValue) => {
+    const originalRow = allData.find(r => r[PRIMARY_KEY_COLUMN] === orderId);
+    const originalValue = originalRow ? String(originalRow[colKey] ?? '') : '';
+    const isDelete = newValue === '' && originalValue !== '';
+
+    setPendingChanges((prev) => {
+      const next = new Map(prev);
+      if (!next.has(orderId)) next.set(orderId, new Map());
+
+      if (newValue !== originalValue) {
+        next.get(orderId).set(colKey, { newValue, originalValue });
+      } else {
+        next.get(orderId).delete(colKey);
+        if (next.get(orderId).size === 0) next.delete(orderId);
+        setLegacyChanges(prevLeg => {
+          const nextLeg = new Map(prevLeg);
+          if (nextLeg.has(orderId)) {
+            nextLeg.get(orderId).delete(colKey);
+            if (nextLeg.get(orderId).size === 0) nextLeg.delete(orderId);
+          }
+          return nextLeg;
+        });
+      }
+      savePendingToLocalStorage(next, legacyChanges);
+
+      if (!updateQueue.current.has(orderId)) {
+        updateQueue.current.set(orderId, { changes: new Map(), hasDelete: false });
+      }
+      const qEntry = updateQueue.current.get(orderId);
+      if (qEntry.timeout) clearTimeout(qEntry.timeout);
+
+      qEntry.changes.set(colKey, { newValue, originalValue });
+      if (isDelete) qEntry.hasDelete = true;
+
+      let totalChanges = 0;
+      let hasAnyDelete = false;
+      updateQueue.current.forEach(v => {
+        totalChanges += v.changes.size;
+        if (v.hasDelete) hasAnyDelete = true;
       });
 
-      await Promise.all(deletePromises);
+      if (hasAnyDelete || totalChanges >= BULK_THRESHOLD) {
+        qEntry.timeout = setTimeout(() => processUpdateQueue(true), UPDATE_DELAY);
+      } else {
+        qEntry.timeout = setTimeout(() => processUpdateQueue(false), UPDATE_DELAY);
+      }
+      return next;
+    });
+  }, [allData, legacyChanges, processUpdateQueue, savePendingToLocalStorage]);
 
-      // Remove from both f3Data and localF3Data
-      setF3Data((prev) => prev.filter((item) => !selectedRows.has(item.id)));
-      setLocalF3Data((prev) =>
-        prev.filter((item) => !selectedRows.has(item.id))
-      );
-
-      setSelectedRows(new Set());
-      toast.success(`Đã xóa ${idsToDelete.length} vận đơn thành công`);
-    } catch (err) {
-      console.error("Error deleting selected orders:", err);
-      toast.error("Lỗi khi xóa vận đơn. Vui lòng thử lại.");
-    } finally {
-      setDeleteInProgress(false);
-      setShowDeleteModal(false);
+  const handleUpdateAll = async () => {
+    const combined = new Map([...legacyChanges, ...pendingChanges]);
+    if (combined.size === 0) {
+      addToast('Không có thay đổi cần cập nhật', 'info');
+      return;
+    }
+    const rowsToSend = [];
+    combined.forEach((changes, orderId) => {
+      const row = { [PRIMARY_KEY_COLUMN]: orderId };
+      changes.forEach((info, key) => { row[key] = info.newValue; });
+      rowsToSend.push(row);
+    });
+    try {
+      const toastId = addToast('Đang gửi tất cả thay đổi...', 'loading', 0);
+      const res = await API.updateBatch(rowsToSend);
+      if (res.success) {
+        setAllData(prev => {
+          let next = [...prev];
+          rowsToSend.forEach(updatedRow => {
+            const idx = next.findIndex(r => r[PRIMARY_KEY_COLUMN] === updatedRow[PRIMARY_KEY_COLUMN]);
+            if (idx > -1) next[idx] = { ...next[idx], ...updatedRow };
+          });
+          return next;
+        });
+        setLegacyChanges(new Map());
+        setPendingChanges(new Map());
+        savePendingToLocalStorage(new Map(), new Map());
+        setSyncPopoverOpen(false);
+        removeToast(toastId);
+        addToast('Cập nhật thành công!', 'success');
+      }
+    } catch (e) {
+      addToast(e.message, 'error');
     }
   };
 
-  const clearSelection = () => {
-    setSelectedRows(new Set());
+  const handleQuickSync = (rows) => {
+    const newPending = new Map(pendingChanges);
+    // Phải khớp với COLUMNS trong QuickAddModal.tsx
+    const COL_KEYS = [
+      "Mã đơn hàng",           // index 0 - khóa chính
+      "Mã Tracking",           // index 1
+      "Ngày đóng hàng",        // index 2
+      "Trạng thái giao hàng",  // index 3
+      "GHI CHÚ",               // index 4
+      "Thời gian giao dự kiến", // index 5
+      "Phí ship nội địa Mỹ (usd)", // index 6
+      "Phí xử lý đơn đóng hàng-Lưu kho(usd)", // index 7
+      "Kết quả Check",         // index 8
+      "Ghi chú",               // index 9
+      "Đơn vị vận chuyển"      // index 10
+    ];
+    let updatedCount = 0;
+    let notFoundCount = 0;
+    rows.forEach(row => {
+      const orderId = row[0]?.trim();
+      if (!orderId) return;
+      const originalRow = allData.find(r => r[PRIMARY_KEY_COLUMN] === orderId);
+      if (!originalRow) {
+        notFoundCount++;
+        return;
+      }
+      COL_KEYS.forEach((colName, idx) => {
+        if (idx === 0) return;
+        const val = row[idx];
+        if (val !== undefined && val !== "") {
+          const dataKey = COLUMN_MAPPING[colName] || colName;
+          if (!newPending.has(orderId)) newPending.set(orderId, new Map());
+          const originalVal = originalRow[dataKey] ?? '';
+          if (String(originalVal) !== String(val)) {
+            newPending.get(orderId).set(dataKey, { newValue: String(val), originalValue: String(originalVal) });
+            updatedCount++;
+          }
+        }
+      });
+    });
+    setPendingChanges(newPending);
+    savePendingToLocalStorage(newPending, legacyChanges);
+    if (notFoundCount > 0) addToast(`Không tìm thấy ${notFoundCount} mã đơn hàng.`, 'error');
+    addToast(`Đã đồng bộ ${updatedCount} trường dữ liệu.`, 'success');
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Đang tải dữ liệu vận đơn...</p>
-        </div>
-      </div>
-    );
-  }
+  const handleDownloadExcel = () => {
+    // Generate simple excel/csv
+    const headers = currentColumns;
+    const body = getFilteredData.map(row => {
+      return headers.map(col => {
+        const val = row[COLUMN_MAPPING[col] || col] || row[col] || '';
+        return `"${String(val).replace(/"/g, '""')}"`;
+      }).join(",");
+    }).join("\n");
 
-  if (error) {
-    return (
-      <div className="text-center py-8 bg-red-50 rounded-lg">
-        <p className="text-red-600">Lỗi: {error}</p>
-      </div>
-    );
-  }
-
-  const hasActiveFilters = () => {
-    // Only treat a filter as "active" when it has a meaningful value.
-    // Arrays must have length > 0, strings are trimmed before checking.
-    const hasDate = Boolean(filters.startDate) || Boolean(filters.endDate);
-    const hasSearch =
-      typeof filters.searchText === "string" &&
-      filters.searchText.trim().length > 0;
-    const hasPayment = Array.isArray(filters.paymentMethod)
-      ? filters.paymentMethod.length > 0
-      : Boolean(filters.paymentMethod);
-    const hasShifts =
-      Array.isArray(filters.shifts) && filters.shifts.length > 0;
-    const hasTeams = Array.isArray(filters.teams) && filters.teams.length > 0;
-    const hasProducts =
-      Array.isArray(filters.products) && filters.products.length > 0;
-
-    return (
-      hasDate || hasSearch || hasPayment || hasShifts || hasTeams || hasProducts
-    );
+    const csv = `\uFEFF${headers.join(",")}\n${body}`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `export_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
+  // --- Interaction (Mouse) ---
+  const handleMouseDown = (rowIdx, colIdx, e) => {
+    if (e.button !== 0) return; // Only left click
+
+    // If click on input/select, don't start selection drag immediately?
+    // Actually we want click to select the cell.
+
+    isSelecting.current = true;
+
+    if (e.ctrlKey) {
+      // Add to selection? Complex. Let's stick to single contiguous selection for now google sheets style
+      setSelection({ startRow: rowIdx, startCol: colIdx, endRow: rowIdx, endCol: colIdx });
+    } else if (e.shiftKey && selection.startRow !== null) {
+      setSelection(prev => ({ ...prev, endRow: rowIdx, endCol: colIdx }));
+    } else {
+      setSelection({ startRow: rowIdx, startCol: colIdx, endRow: rowIdx, endCol: colIdx });
+    }
+  };
+
+  const handleMouseEnter = (rowIdx, colIdx) => {
+    if (isSelecting.current) {
+      setSelection(prev => ({ ...prev, endRow: rowIdx, endCol: colIdx }));
+    }
+  };
+
+  useEffect(() => {
+    const handleMouseUp = () => { isSelecting.current = false; };
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => document.removeEventListener('mouseup', handleMouseUp);
+  }, []);
+
+  // --- Keyboard Navigation ---
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Copy / Paste
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        const bounds = getSelectionBounds();
+        if (!bounds) return;
+
+        // Prepare data for clipboard
+        const rows = [];
+        for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+          const rowData = [];
+          for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+            const colName = currentColumns[c];
+            const rData = paginatedData[r];
+            if (!rData) continue;
+            const val = rData[COLUMN_MAPPING[colName] || colName] ?? rData[colName] ?? '';
+            rowData.push(val);
+          }
+          rows.push(rowData.join('\t'));
+        }
+        const text = rows.join('\n');
+        navigator.clipboard.writeText(text);
+
+        setCopiedSelection(selection);
+        setCopiedData(text);
+        addToast('Đã copy vào clipboard', 'info', 1000);
+        return;
+      }
+
+      // Arrow keys
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && selection.startRow !== null) {
+        // Prevent default if not editing
+        const activeEl = document.activeElement;
+        const isInput = activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA';
+        if (isInput) return; // Let input handle arrows
+
+        e.preventDefault();
+        let { startRow, startCol, endRow, endCol } = selection;
+        // Move the 'active' end, keep start anchor if shift
+        let newRow = endRow;
+        let newCol = endCol;
+
+        if (e.key === 'ArrowUp') newRow = Math.max(0, endRow - 1);
+        if (e.key === 'ArrowDown') newRow = Math.min(paginatedData.length - 1, endRow + 1);
+        if (e.key === 'ArrowLeft') newCol = Math.max(0, endCol - 1);
+        if (e.key === 'ArrowRight') newCol = Math.min(currentColumns.length - 1, endCol + 1);
+
+        if (e.shiftKey) {
+          setSelection(prev => ({ ...prev, endRow: newRow, endCol: newCol }));
+        } else {
+          setSelection({ startRow: newRow, startCol: newCol, endRow: newRow, endCol: newCol });
+        }
+        return;
+      }
+
+      // Ctrl+A - Select all visible
+      if (e.ctrlKey && e.key === 'a') {
+        const activeEl = document.activeElement;
+        if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
+
+        e.preventDefault();
+        setSelection({
+          startRow: 0,
+          startCol: 0,
+          endRow: paginatedData.length - 1,
+          endCol: currentColumns.length - 1
+        });
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selection, paginatedData.length, currentColumns.length, getSelectionBounds, paginatedData, currentColumns]);
+
+  // --- Paste Logic ---
+  useEffect(() => {
+    const handlePaste = (e) => {
+      if (quickAddModalOpen) return;
+
+      const active = document.activeElement;
+      // If focusing a filter input in header, allow normal paste
+      if (active && active.closest('th')) return;
+      // If focusing input in cell, handle carefully? simpler to just override or let it be.
+      // Google sheets allows pasting into cell edit mode.
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+        // return; // Let browser handle it? 
+        // But if we want multi-cell paste support, we need to intercept if not editing.
+        if (active.closest('td')) {
+          // Find which cell
+          // Logic to determine if we should handle multi-cell paste
+        }
+      }
+
+      if (selection.startRow === null) return;
+
+      // Handle paste logic
+      const text = e.clipboardData?.getData('text/plain');
+      if (!text) return;
+
+      e.preventDefault();
+      const rows = text.split(/\r\n?|\n/).filter(r => r.length > 0).map(r => r.split('\t'));
+      if (rows.length === 0) return;
+
+      const bounds = getSelectionBounds();
+      if (!bounds) return;
+
+      const newPending = new Map(pendingChanges);
+      let updatedCount = 0;
+
+      // Paste logic: repeat pattern if source smaller than selection
+      // Simply: iterate selection or data based on rules.
+      // Simplified: Paste top-left aligned to selection start
+
+      rows.forEach((rowVals, rIdx) => {
+        const targetRowIdx = bounds.minRow + rIdx;
+        if (targetRowIdx >= paginatedData.length) return;
+
+        const rowData = paginatedData[targetRowIdx];
+        const orderId = rowData[PRIMARY_KEY_COLUMN];
+
+        rowVals.forEach((val, cIdx) => {
+          const targetColIdx = bounds.minCol + cIdx;
+          if (targetColIdx >= currentColumns.length) return;
+
+          const colName = currentColumns[targetColIdx];
+          if (!EDITABLE_COLS.includes(colName)) return; // Skip read-only
+
+          const dataKey = COLUMN_MAPPING[colName] || colName;
+          const originalValue = rowData[dataKey] ?? '';
+
+          if (String(val) !== String(originalValue)) {
+            if (!newPending.has(orderId)) newPending.set(orderId, new Map());
+            newPending.get(orderId).set(dataKey, {
+              newValue: String(val),
+              originalValue: String(originalValue)
+            });
+            updatedCount++;
+          }
+        });
+      });
+
+      if (updatedCount > 0) {
+        setPendingChanges(newPending);
+        savePendingToLocalStorage(newPending, legacyChanges);
+        addToast(`Đã dán ${updatedCount} ô`, 'success');
+      }
+    };
+
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [selection, quickAddModalOpen, pendingChanges, legacyChanges, paginatedData, currentColumns, getSelectionBounds]);
+
+
+  // Calculated helpers for render
+  const calculatedSummary = useMemo(() => {
+    if (!selectionBounds) return null;
+    const viewData = paginatedData;
+    let count = 0;
+    let sum = 0;
+    let numericCount = 0;
+
+    for (let r = selectionBounds.minRow; r <= selectionBounds.maxRow && r < viewData.length; r++) {
+      for (let c = selectionBounds.minCol; c <= selectionBounds.maxCol && c < currentColumns.length; c++) {
+        count++;
+        const col = currentColumns[c];
+        const key = COLUMN_MAPPING[col] || col;
+        const val = viewData[r][key] ?? viewData[r][col] ?? '';
+        const numVal = parseFloat(String(val).replace(/[^\d.-]/g, ''));
+        if (!isNaN(numVal)) {
+          sum += numVal;
+          numericCount++;
+        }
+      }
+    }
+    return { count, sum: numericCount > 0 ? sum : 0, avg: numericCount > 0 ? sum / numericCount : 0 };
+  }, [selectionBounds, paginatedData, currentColumns]);
+
+  const totalMoney = useMemo(() => {
+    return getFilteredData.reduce((sum, row) => {
+      let val = row["Tổng tiền VNĐ"] || row["Tổng_tiền_VNĐ"] || row["Giá bán"] || 0;
+      const num = parseFloat(String(val).replace(/[^\d.-]/g, "")) || 0;
+      return sum + num;
+    }, 0);
+  }, [getFilteredData]);
+
+  const teams = Array.from(new Set(allData.map(r => r[TEAM_COLUMN_NAME]).filter(Boolean))).sort();
+
+  // Simplified cell class
+  const getCellClass = (row, col, val, rIdx, cIdx) => {
+    let classes = "px-3 py-2 border border-gray-200 text-sm h-[38px] whitespace-nowrap ";
+
+    // Status
+    if (col === "Kết quả Check" || col === "Kết quả check") {
+      const v = String(val).toLowerCase();
+      if (v === 'ok') classes += "bg-green-100 text-green-800 font-bold ";
+      else if (v.includes('huỷ')) classes += "bg-red-100 text-red-800 font-bold ";
+    }
+
+    // Long Text
+    if (viewMode === 'BILL_OF_LADING' && LONG_TEXT_COLS.includes(col)) {
+      classes = classes.replace('whitespace-nowrap', isLongTextExpanded ? "whitespace-pre-wrap max-w-xs break-words bg-yellow-50" : "whitespace-nowrap overflow-hidden text-ellipsis max-w-[200px] cursor-pointer");
+    }
+
+    // Editable
+    const isEditable = EDITABLE_COLS.includes(col);
+    if (isEditable) {
+      const orderId = row[PRIMARY_KEY_COLUMN];
+      if (pendingChanges.get(orderId)?.has(COLUMN_MAPPING[col] || col)) {
+        classes += "!bg-yellow-300 ";
+      } else {
+        classes += "bg-[#e8f5e9] ";
+      }
+    }
+
+    // Fixed
+    if (cIdx < fixedColumns) {
+      classes += "sticky z-10 left-0 bg-gray-50 ";
+    }
+
+    // Selection
+    if (selectionBounds && rIdx >= selectionBounds.minRow && rIdx <= selectionBounds.maxRow &&
+      cIdx >= selectionBounds.minCol && cIdx <= selectionBounds.maxCol) {
+      classes += "!bg-[#e3f2fd] ";
+      if (rIdx === selectionBounds.minRow) classes += "selection-border-top ";
+      if (rIdx === selectionBounds.maxRow) classes += "selection-border-bottom ";
+      if (cIdx === selectionBounds.minCol) classes += "selection-border-left ";
+      if (cIdx === selectionBounds.maxCol) classes += "selection-border-right ";
+    }
+
+    return classes;
+  };
+
+  /* End Component Logic */
   return (
-    <div className="px-8 py-6">
-      <div className="flex items-center justify-between mb-6">
-        <Link
-          to="/"
-          className="text-sm text-gray-600 hover:text-gray-800 flex-shrink-0 flex items-center gap-2"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Quay lại
-        </Link>
-
-        <h2 className="text-2xl font-bold text-primary uppercase text-center flex-1">
-          Vận đơn
-        </h2>
-
-        <Link
-          to="/lich-su-thay-doi"
-          className="ml-4 flex-shrink-0 inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-md text-sm text-gray-700 hover:bg-gray-50 hover:shadow-sm"
-          title="Xem lịch sử thay đổi"
-        >
-          Lịch sử thay đổi
-        </Link>
-      </div>
-      <div className="mb-4">
-        <div className="relative max-w-md">
-          <input
-            type="text"
-            value={filters.searchText || ""}
-            onChange={(e) => handleFilterChange("searchText", e.target.value)}
-            placeholder="Tìm kiếm trong bảng..."
-            className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm transition-all"
-          />
-          <svg
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-            />
-          </svg>
-          {filters.searchText && (
-            <button
-              onClick={() => handleFilterChange("searchText", "")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-            >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
+    <div className="min-h-screen bg-gray-50">
+      {/* Header Bar */}
+      <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50">
+        <div className="max-w-full mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link to="/" className="text-gray-600 hover:text-gray-900 transition-colors">
+                <ChevronLeft className="w-5 h-5" />
+              </Link>
+              <img
+                  src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2Fbe61f44f.%E1%BA%A2nh.021347.png"
+                  alt="Logo"
+                  className="h-10 object-contain"
                 />
-              </svg>
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-6 gap-6">
-        <div className="lg:col-span-6">
-          <FilterPanel
-            activeTab={"f3"}
-            filters={filters}
-            handleFilterChange={handleFilterChange}
-            quickSelectValue={quickSelectValue}
-            handleQuickDateSelect={handleQuickDateSelect}
-            availableFilters={availableFilters}
-            userRole={userRole}
-            hasActiveFilters={hasActiveFilters}
-            clearAllFilters={clearFilters}
-            showMarkets={false}
-            showPaymentMethodSearch={true}
-            variant="topbar"
-            columnsConfig={columnsConfig}
-            visibleColumns={visibleColumns}
-            onVisibleColumnsChange={setVisibleColumns}
-          />
-        </div>
-
-        <div className="lg:col-span-6">
-          {/* Search input grouped under the filter panel (appears above the table) */}
-          {/* Summary Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div className="bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white transform transition-all duration-300 hover:scale-105 hover:shadow-xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm opacity-90 mb-1">Tổng đơn hàng</p>
-                  <p className="text-3xl font-bold">{stats.totalOrders}</p>
-                </div>
-                <svg
-                  className="w-12 h-12 opacity-80 transition-transform duration-300 hover:scale-110"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"></path>
-                  <path
-                    fillRule="evenodd"
-                    d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z"
-                    clipRule="evenodd"
-                  ></path>
-                </svg>
+              <div>
+                <h1 className="text-xl font-bold text-gray-800">QUẢN LÝ VẬN ĐƠN</h1>
+                <p className="text-xs text-gray-500">Hệ thống quản lý SPEEGO</p>
               </div>
             </div>
-
-            <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-lg shadow-lg p-6 text-white transform transition-all duration-300 hover:scale-105 hover:shadow-xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm opacity-90 mb-1">
-                    Tổng doanh thu (VNĐ)
-                  </p>
-                  <p className="text-2xl font-bold">
-                    {stats.totalRevenue.toLocaleString("vi-VN")}
-                  </p>
-                </div>
-                <svg
-                  className="w-12 h-12 opacity-80 transition-transform duration-300 hover:scale-110"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"></path>
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z"
-                    clipRule="evenodd"
-                  ></path>
-                </svg>
+            
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg">
+                <span className={`h-2 w-2 rounded-full ${allData.length > 0 ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                <span className="text-sm text-gray-600">
+                  {allData.length > 0 ? `${allData.length} đơn hàng` : 'Chưa có dữ liệu'}
+                </span>
               </div>
-            </div>
-
-            <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg shadow-lg p-6 text-white transform transition-all duration-300 hover:scale-105 hover:shadow-xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm opacity-90 mb-1">Đơn hợp lệ</p>
-                  <p className="text-3xl font-bold">{stats.validOrders}</p>
-                </div>
-                <svg
-                  className="w-12 h-12 opacity-80 transition-transform duration-300 hover:scale-110"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                    clipRule="evenodd"
-                  ></path>
-                </svg>
-              </div>
-            </div>
-
-            <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg shadow-lg p-6 text-white transform transition-all duration-300 hover:scale-105 hover:shadow-xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm opacity-90 mb-1">Giá trị TB/Đơn</p>
-                  <p className="text-2xl font-bold">
-                    {stats.avgOrderValue.toLocaleString("vi-VN", {
-                      maximumFractionDigits: 0,
-                    })}
-                  </p>
-                </div>
-                <svg
-                  className="w-12 h-12 opacity-80 transition-transform duration-300 hover:scale-110"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"></path>
-                </svg>
-              </div>
+              <button
+                onClick={loadData}
+                disabled={loading}
+                className="px-4 py-2 bg-[#F37021] hover:bg-[#e55f1a] text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm"
+              >
+                {loading ? (
+                  <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                )}
+                {loading ? 'Đang tải...' : 'Tải lại'}
+              </button>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Row Selection Controls */}
-          <div className="mb-4 flex items-center justify-between bg-white rounded-lg shadow-md p-4">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
+      {/* Main Content */}
+      <div className="max-w-full mx-auto px-6 py-6">
+        {/* Tabs */}
+        <div className="bg-white rounded-t-lg border-b border-gray-200 mb-0 shadow-sm">
+          <div className="flex overflow-x-auto">
+            {[
+              { id: 'all', label: 'Dữ liệu đơn hàng', icon: '📋' },
+              { id: 'japan', label: 'Đơn Nhật', icon: '🇯🇵' },
+              { id: 'hcm', label: 'FFM đẩy vận hành', icon: '🚚' },
+              { id: 'hanoi', label: 'FFM Hà Nội', icon: '🏢' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                className={`px-6 py-4 text-sm font-semibold transition-all whitespace-nowrap border-b-3 flex items-center gap-2 ${
+                  bolActiveTab === tab.id
+                    ? 'text-[#F37021] border-b-3 border-[#F37021] bg-[#fff5f0]'
+                    : 'text-gray-600 border-b-3 border-transparent hover:text-[#F37021] hover:bg-gray-50'
+                }`}
+                onClick={() => { setBolActiveTab(tab.id); setCurrentPage(1); }}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Filters Panel */}
+        <div className="bg-white rounded-b-lg shadow-sm border border-t-0 border-gray-200 p-4 mb-6">
+          <div className="flex flex-wrap items-end gap-4">
+            {/* Date Type Selector */}
+            <div className="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200">
+              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Ngày:</label>
+              <select 
+                value={bolDateType} 
+                onChange={e => setBolDateType(e.target.value)} 
+                className="text-sm border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-[#F37021] focus:border-transparent"
+              >
+                <option value="Ngày lên đơn">Lên đơn</option>
+                <option value="Ngày đóng hàng">Đóng hàng</option>
+              </select>
+            </div>
+
+            {/* Quick Filter */}
+            <div className="min-w-[180px]">
+              <label className="text-xs font-semibold text-gray-600 mb-1.5 block">Lọc nhanh</label>
+              <select
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F37021] bg-white"
+                value={quickFilter || ''}
+                onChange={(e) => handleQuickFilter(e.target.value)}
+              >
+                <option value="">-- Chọn --</option>
+                <option value="today">Hôm nay</option>
+                <option value="yesterday">Hôm qua</option>
+                <option value="this-week">Tuần này</option>
+                <option value="last-week">Tuần trước</option>
+                <option value="this-month">Tháng này</option>
+                <option value="last-month">Tháng trước</option>
+                <option value="this-year">Năm nay</option>
+              </select>
+            </div>
+
+            {/* Date Range Filter with Checkbox */}
+            <div className="min-w-[200px]">
+              <label className="text-xs font-semibold text-gray-600 mb-1.5 block flex items-center gap-2">
                 <input
                   type="checkbox"
-                  id="selectAllRows"
-                  checked={
-                    paginatedF3Data.length > 0 &&
-                    paginatedF3Data.every((item) => selectedRows.has(item.id))
-                  }
-                  onChange={toggleSelectAllRows}
-                  className="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
+                  checked={enableDateFilter || false}
+                  onChange={(e) => {
+                    setEnableDateFilter(e.target.checked);
+                    if (!e.target.checked) {
+                      setDateFrom('');
+                      setDateTo('');
+                      setQuickFilter('');
+                    }
+                  }}
+                  className="w-4 h-4 text-[#F37021] border-gray-300 rounded focus:ring-[#F37021]"
                 />
-                <label
-                  htmlFor="selectAllRows"
-                  className="text-sm font-medium text-gray-700 cursor-pointer"
-                >
-                  Chọn tất cả ({selectedRows.size} đã chọn)
-                </label>
+                <span>Thời gian (Từ - Đến)</span>
+              </label>
+              <div className="flex gap-2">
+                <input 
+                  type="date" 
+                  disabled={!enableDateFilter}
+                  className="flex-1 text-sm border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-[#F37021] focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed" 
+                  value={dateFrom} 
+                  onChange={e => setDateFrom(e.target.value)} 
+                />
+                <input 
+                  type="date" 
+                  disabled={!enableDateFilter}
+                  className="flex-1 text-sm border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-[#F37021] focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed" 
+                  value={dateTo} 
+                  onChange={e => setDateTo(e.target.value)} 
+                />
               </div>
-              {selectedRows.size > 0 && (
-                <button
-                  onClick={clearSelection}
-                  className="px-3 py-1 text-sm bg-gray-500 text-white rounded hover:bg-gray-600 transition-all duration-200"
-                >
-                  Xóa chọn
-                </button>
-              )}
             </div>
 
-            <div className="flex gap-2">
-              <button
-                onClick={handleDeleteSelectedOrders}
-                disabled={selectedRows.size === 0}
-                className={`px-4 py-2 text-sm font-medium rounded transition-all duration-200 mr-2 ${
-                  selectedRows.size === 0
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                    : "bg-red-600 text-white hover:bg-red-700 hover:shadow-md"
-                }`}
+            <div className="flex flex-col gap-1.5 min-w-[180px]">
+              <label className="text-xs font-semibold text-gray-600">Sản phẩm</label>
+              <MultiSelect
+                label="Lọc sản phẩm"
+                mainFilter={true}
+                options={getUniqueValues("Mặt hàng")}
+                selected={filterValues.product}
+                onChange={(vals) => setFilterValues(prev => ({ ...prev, product: vals }))}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5 min-w-[180px]">
+              <label className="text-xs font-semibold text-gray-600">Khu vực</label>
+              <MultiSelect
+                label="Lọc khu vực"
+                mainFilter={true}
+                options={getUniqueValues("Khu vực")}
+                selected={filterValues.market}
+                onChange={(vals) => setFilterValues(prev => ({ ...prev, market: vals }))}
+              />
+            </div>
+
+            <button
+              onClick={refreshData}
+              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors border border-gray-300 flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Xóa lọc
+            </button>
+          </div>
+        </div>
+
+        {/* Toolbar */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <button 
+                onClick={() => setSyncPopoverOpen(true)} 
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors border border-gray-300 relative flex items-center gap-2"
               >
-                <svg
-                  className="w-4 h-4 inline mr-1"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path d="M6 2a1 1 0 00-1 1v1H3a1 1 0 100 2h14a1 1 0 100-2h-2V3a1 1 0 00-1-1H6z" />
-                  <path d="M6 7a1 1 0 011 1v7a2 2 0 002 2h2a2 2 0 002-2V8a1 1 0 112 0v7a4 4 0 01-4 4H9a4 4 0 01-4-4V8a1 1 0 011-1z" />
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Xóa {selectedRows.size > 0 && `(${selectedRows.size})`}
+                Trạng thái cập nhật
+                {(legacyChanges.size + pendingChanges.size) > 0 && (
+                  <span className="absolute -top-2 -right-2 bg-[#F37021] text-white text-xs font-bold px-2 py-0.5 rounded-full min-w-[20px] text-center">
+                    {legacyChanges.size + pendingChanges.size}
+                  </span>
+                )}
+              </button>
+              <button 
+                onClick={handleUpdateAll} 
+                className="px-4 py-2 bg-[#F37021] hover:bg-[#e55f1a] text-white rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Cập nhật
+              </button>
+              <button 
+                onClick={() => setQuickAddModalOpen(true)} 
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Thêm nhanh
+              </button>
+              <button 
+                onClick={() => setShowColumnSettings(true)}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                Cài đặt cột
+              </button>
+              <button 
+                onClick={handleDownloadExcel} 
+                className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Excel
               </button>
 
-              <button
-                onClick={copySelectedRows}
-                disabled={selectedRows.size === 0}
-                className={`px-4 py-2 text-sm font-medium rounded transition-all duration-200 ${
-                  selectedRows.size === 0
-                    ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                    : "bg-green-600 text-white hover:bg-green-700 hover:shadow-md"
-                }`}
-              >
-                <svg
-                  className="w-4 h-4 inline mr-1"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
-                  <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
-                </svg>
-                Copy {selectedRows.size > 0 && `(${selectedRows.size})`}
-              </button>
+              <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
+                <label className="text-sm text-gray-600">Cột cố định:</label>
+                <input 
+                  type="number" 
+                  min="0" 
+                  className="w-16 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#F37021]" 
+                  value={fixedColumns} 
+                  onChange={e => setFixedColumns(Number(e.target.value))} 
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-2 rounded-lg border border-blue-200">
+                <div className="text-sm font-semibold text-gray-700">
+                  Tổng đơn: <span className="text-[#F37021]">{getFilteredData.length}</span>
+                </div>
+                <div className="text-xs text-gray-600">
+                  Tổng tiền: <span className="text-green-600 font-bold">{totalMoney.toLocaleString('vi-VN')} ₫</span>
+                </div>
+              </div>
             </div>
           </div>
+        </div>
 
-          {/* F3 Data Table */}
-          {localF3Data.length === 0 ? (
-            <div className="text-center py-8 bg-gray-50 rounded-lg">
-              <p className="text-gray-500">Không có dữ liệu vận đơn</p>
-            </div>
-          ) : (
-            <>
-              <div className="overflow-x-auto shadow-md rounded-lg">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-green-500">
-                    <tr>
-                      {/* Row Selection Column */}
-                      <th className="px-3 py-3 text-center text-sm font-medium text-white uppercase tracking-wider border border-gray-300 whitespace-nowrap">
+        {/* Table */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-auto max-h-[calc(100vh-500px)] relative select-none">
+        <table className="w-full border-collapse min-w-[2500px] text-sm">
+          <thead className="sticky top-0 z-30">
+            <tr className="bg-gray-100 h-12">
+              {currentColumns.map((col, idx) => {
+                const key = COLUMN_MAPPING[col] || col;
+                const filterKey = col;
+                const stickyStyle = idx < fixedColumns ?
+                  { position: 'sticky', left: idx * 100, zIndex: 40, background: '#f8f9fa' } : {};
+
+                return (
+                  <th key={`filter-${col}`} className="p-1.5 border-b-2 border-r border-gray-300 min-w-[120px] align-top bg-[#f8f9fa]" style={stickyStyle}>
+                    <div className="font-semibold mb-1 text-gray-700">{col}</div>
+                    {/* Render Filters based on View Mode and Column Type */}
+                    {col === "STT" ? (
+                      <div className="text-xs text-gray-400">-</div>
+                    ) : col === "Mã Tracking" ? (
+                      <div className="flex flex-col gap-1">
                         <input
-                          type="checkbox"
-                          checked={
-                            paginatedF3Data.length > 0 &&
-                            paginatedF3Data.every((item) =>
-                              selectedRows.has(item.id)
-                            )
-                          }
-                          onChange={toggleSelectAllRows}
-                          className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
+                          className="w-full text-xs px-1 py-0.5 border rounded" placeholder="Bao gồm..."
+                          value={localFilterValues.tracking_include} onChange={e => setLocalFilterValues(p => ({ ...p, tracking_include: e.target.value }))}
                         />
-                      </th>
-                      {columnOrder.map((columnKey) => {
-                        if (!visibleColumns[columnKey]) return null;
+                        <input
+                          className="w-full text-xs px-1 py-0.5 border rounded" placeholder="Loại trừ..."
+                          value={localFilterValues.tracking_exclude} onChange={e => setLocalFilterValues(p => ({ ...p, tracking_exclude: e.target.value }))}
+                        />
+                      </div>
+                    ) : DROPDOWN_OPTIONS[col] || DROPDOWN_OPTIONS[key] || ["Trạng thái giao hàng", "Kết quả check", "GHI CHÚ"].includes(col) ? (
+                      <MultiSelect
+                        label={`Lọc...`}
+                        options={getMultiSelectOptions(col)}
+                        selected={filterValues[filterKey] || []}
+                        onChange={vals => setFilterValues(p => ({ ...p, [filterKey]: vals }))}
+                      />
+                    ) : ["Ngày lên đơn", "Ngày đóng hàng", "Ngày đẩy đơn", "Ngày có mã tracking", "Ngày Kế toán đối soát với FFM lần 2"].includes(col) ? (
+                      <input
+                        type="date" className="w-full text-xs px-1 py-1 border rounded shadow-sm"
+                        value={filterValues[filterKey] || ''} onChange={e => setFilterValues(p => ({ ...p, [filterKey]: e.target.value }))}
+                      />
+                    ) : (
+                      <input
+                        type="text" className="w-full text-xs px-1 py-1 border rounded shadow-sm" placeholder="..."
+                        value={localFilterValues[filterKey] || ''} onChange={e => setLocalFilterValues(p => ({ ...p, [filterKey]: e.target.value }))}
+                      />
+                    )}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={currentColumns.length} className="text-center p-10 text-gray-500">Đang tải dữ liệu...</td></tr>
+            ) : paginatedData.length === 0 ? (
+              <tr><td colSpan={currentColumns.length} className="text-center p-10 text-gray-500 italic">Không có dữ liệu phù hợp</td></tr>
+            ) : (
+              paginatedData.map((row, rIdx) => {
+                const orderId = row[PRIMARY_KEY_COLUMN];
+                return (
+                  <tr key={orderId} className="hover:bg-[#E8EAF6] transition-colors">
+                    {currentColumns.map((col, cIdx) => {
+                      const key = COLUMN_MAPPING[col] || col;
+                      const val = row[key] ?? row[col] ?? row[col.replace(/ /g, '_')] ?? '';
+                      // Use formatDate for dates
+                      const displayVal = ["Ngày lên đơn", "Ngày đóng hàng", "Ngày đẩy đơn", "Ngày có mã tracking", "Ngày Kế toán đối soát với FFM lần 2"].includes(col)
+                        ? formatDate(val)
+                        : (col === "Tổng tiền VNĐ" ? Number(String(val).replace(/[^\d.-]/g, "")).toLocaleString('vi-VN') : val);
 
-                        const columnLabels = {
-                          stt: "STT",
-                          orderCode: "Mã đơn hàng",
-                          customerName: "Tên khách hàng",
-                          phone: "Điện thoại",
-                          address: "Địa chỉ",
-                          product: "Mặt hàng",
-                          quantity: "Số lượng",
-                          price: "Giá bán",
-                          totalVND: "Tổng tiền VNĐ",
-                          marketing: "NV Marketing",
-                          sale: "NV Sale",
-                          team: "Team",
-                          shift: "Ca",
-                          orderDate: "Ngày lên đơn",
-                          status: "Trạng thái đơn",
-                          paymentMethod: "Hình thức TT",
-                        };
+                      const cellStyle = cIdx < fixedColumns ?
+                        { position: 'sticky', left: cIdx * 100, zIndex: 10 } : {};
 
-                        return (
-                          <th
-                            key={columnKey}
-                            className={`px-3 py-3 text-center text-sm font-medium text-white uppercase tracking-wider border border-gray-300 whitespace-nowrap cursor-move select-none transition-all duration-300 relative overflow-visible ${
-                              draggedColumn === columnKey
-                                ? "opacity-50 scale-105 rotate-2 shadow-2xl bg-green-700 z-50"
-                                : dropTarget === columnKey
-                                ? "bg-green-500 border-green-300 border-2 shadow-lg scale-105 animate-pulse"
-                                : "hover:bg-green-800"
-                            }`}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, columnKey)}
-                            onDragOver={(e) => handleDragOver(e, columnKey)}
-                            onDragLeave={handleDragLeave}
-                            onDrop={(e) => handleDrop(e, columnKey)}
-                            onDragEnd={handleDragEnd}
-                            title="Kéo để thay đổi vị trí cột"
-                          >
-                            {/* Ripple Effect */}
-                            {showSuccessRipple && dropTarget === columnKey && (
-                              <div
-                                className="absolute inset-0 bg-white opacity-30 rounded animate-ping"
-                                style={{
-                                  left: ripplePosition.x - 20,
-                                  top: ripplePosition.y - 20,
-                                  width: 40,
-                                  height: 40,
-                                }}
-                              />
-                            )}
-
-                            <div className="flex items-center justify-center gap-2 relative z-10">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleSort(columnKey);
-                                }}
-                                className="w-full flex items-center gap-2 px-2 py-1 bg-white bg-opacity-10 hover:bg-opacity-30 rounded text-sm font-medium"
-                                title="Sắp xếp"
-                              >
-                                <span>{columnLabels[columnKey]}</span>
-                                <span className="ml-1 flex items-center">
-                                  {sortConfig.column === columnKey ? (
-                                    sortConfig.direction === "asc" ? (
-                                      <svg
-                                        className="w-4 h-4 text-white"
-                                        fill="currentColor"
-                                        viewBox="0 0 20 20"
-                                      >
-                                        <path d="M5 12l5-5 5 5H5z" />
-                                      </svg>
-                                    ) : (
-                                      <svg
-                                        className="w-4 h-4 text-white transform rotate-180"
-                                        fill="currentColor"
-                                        viewBox="0 0 20 20"
-                                      >
-                                        <path d="M5 12l5-5 5 5H5z" />
-                                      </svg>
-                                    )
-                                  ) : (
-                                    <svg
-                                      className="w-4 h-4 text-white opacity-50"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      viewBox="0 0 24 24"
-                                    >
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        strokeWidth={2}
-                                        d="M7 11l5-5 5 5M7 13l5 5 5-5"
-                                      />
-                                    </svg>
-                                  )}
-                                </span>
-                              </button>
-                            </div>
-                          </th>
-                        );
-                      })}
-                      {canEditFullOrder && (
-                        <th className="px-3 py-3 text-center text-sm font-medium text-white uppercase tracking-wider border border-gray-300 whitespace-nowrap">
-                          Sửa vận đơn
-                        </th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {paginatedF3Data.map((item, index) => {
-                      const globalIndex =
-                        (currentPage - 1) * itemsPerPage + index;
                       return (
-                        <tr
-                          key={item.id}
-                          className={`hover:bg-gray-50 transition-all duration-200 ${
-                            selectedRows.has(item.id)
-                              ? "bg-green-50 shadow-sm"
-                              : ""
-                          }`}
+                        <td
+                          key={`${orderId}-${col}`}
+                          className={getCellClass(row, col, String(displayVal), rIdx, cIdx)}
+                          style={cellStyle}
+                          onMouseDown={(e) => handleMouseDown(rIdx, cIdx, e)}
+                          onMouseEnter={() => handleMouseEnter(rIdx, cIdx)}
                         >
-                          {/* Row Selection Checkbox */}
-                          <td
-                            className={`px-3 py-3 whitespace-nowrap text-center ${
-                              selectedRows.has(item.id)
-                                ? "border-l-4 border-green-500 bg-green-50"
-                                : "border border-gray-300"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedRows.has(item.id)}
-                              onChange={() => toggleRowSelection(item.id)}
-                              className="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
-                            />
-                          </td>
-                          {columnOrder.map((columnKey) => {
-                            if (!visibleColumns[columnKey]) return null;
-
-                            const renderCell = (key) => {
-                              switch (key) {
-                                case "stt":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {globalIndex + 1}
-                                    </td>
-                                  );
-                                case "orderCode":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Mã đơn hàng"] || "-"}
-                                    </td>
-                                  );
-                                case "customerName":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 text-sm font-medium text-gray-900 border border-gray-300 max-w-[150px] break-words"
-                                    >
-                                      {item["Name*"] ||
-                                        item["Tên lên đơn"] ||
-                                        "-"}
-                                    </td>
-                                  );
-                                case "phone":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Phone*"] || "-"}
-                                    </td>
-                                  );
-                                case "address":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {[
-                                        item["Add"],
-                                        item["City"],
-                                        item["State"],
-                                      ]
-                                        .filter(Boolean)
-                                        .join(", ") || "-"}
-                                    </td>
-                                  );
-                                case "product":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Mặt hàng"] ||
-                                        item["Tên mặt hàng 1"] ||
-                                        "-"}
-                                    </td>
-                                  );
-                                case "quantity":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Số lượng mặt hàng 1"] || "-"}
-                                    </td>
-                                  );
-                                case "price":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      ${item["Giá bán"] || 0}
-                                    </td>
-                                  );
-                                case "totalVND":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-bold text-green-600 border border-gray-300"
-                                    >
-                                      {(
-                                        item["Tổng tiền VNĐ"] || 0
-                                      ).toLocaleString("vi-VN")}
-                                      ₫
-                                    </td>
-                                  );
-                                case "marketing":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Nhân viên Marketing"] || "-"}
-                                    </td>
-                                  );
-                                case "sale":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Nhân viên Sale"] || "-"}
-                                    </td>
-                                  );
-                                case "team":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Team"] || "-"}
-                                    </td>
-                                  );
-                                case "shift":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Ca"] || "-"}
-                                    </td>
-                                  );
-                                case "orderDate":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Ngày lên đơn"]
-                                        ? new Date(
-                                            item["Ngày lên đơn"]
-                                          ).toLocaleDateString("vi-VN")
-                                        : "-"}
-                                    </td>
-                                  );
-                                case "status":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm border border-gray-300 text-center"
-                                    >
-                                      <div className="relative inline-block">
-                                        {canEditStatus ? (
-                                          <>
-                                            <button
-                                              onClick={() =>
-                                                toggleStatusDropdown(item.id)
-                                              }
-                                              className={`px-2 py-1 text-xs rounded-full cursor-pointer hover:opacity-80 transition ${getStatusStyle(
-                                                item["Trạng thái đơn"]
-                                              )}`}
-                                              title="Click để thay đổi trạng thái"
-                                            >
-                                              {item["Trạng thái đơn"] ||
-                                                "Chưa xác định"}{" "}
-                                              ▼
-                                            </button>
-
-                                            {openStatusDropdown === item.id && (
-                                              <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-10 min-w-[140px]">
-                                                {item["Trạng thái đơn"] !==
-                                                  "Đơn hợp lệ" && (
-                                                  <button
-                                                    onClick={() =>
-                                                      handleQuickStatusChange(
-                                                        item.id,
-                                                        "Đơn hợp lệ"
-                                                      )
-                                                    }
-                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 transition flex items-center gap-2"
-                                                  >
-                                                    <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                                                    Đơn hợp lệ
-                                                  </button>
-                                                )}
-                                                {item["Trạng thái đơn"] !==
-                                                  "Đơn hủy" && (
-                                                  <button
-                                                    onClick={() =>
-                                                      handleQuickStatusChange(
-                                                        item.id,
-                                                        "Đơn hủy"
-                                                      )
-                                                    }
-                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 transition flex items-center gap-2"
-                                                  >
-                                                    <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                                                    Đơn hủy
-                                                  </button>
-                                                )}
-                                                {item["Trạng thái đơn"] !==
-                                                  "Đơn chờ xử lý" && (
-                                                  <button
-                                                    onClick={() =>
-                                                      handleQuickStatusChange(
-                                                        item.id,
-                                                        "Đơn chờ xử lý"
-                                                      )
-                                                    }
-                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 transition flex items-center gap-2"
-                                                  >
-                                                    <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
-                                                    Đơn chờ xử lý
-                                                  </button>
-                                                )}
-                                                {item["Trạng thái đơn"] !==
-                                                  "Chưa xác định" && (
-                                                  <button
-                                                    onClick={() =>
-                                                      handleQuickStatusChange(
-                                                        item.id,
-                                                        "Chưa xác định"
-                                                      )
-                                                    }
-                                                    className="w-full px-3 py-2 text-left text-xs hover:bg-gray-50 transition flex items-center gap-2"
-                                                  >
-                                                    <span className="w-2 h-2 rounded-full bg-gray-400"></span>
-                                                    Chưa xác định
-                                                  </button>
-                                                )}
-                                              </div>
-                                            )}
-                                          </>
-                                        ) : (
-                                          <span
-                                            className={`px-2 py-1 text-xs rounded-full ${getStatusStyle(
-                                              item["Trạng thái đơn"]
-                                            )}`}
-                                          >
-                                            {item["Trạng thái đơn"] ||
-                                              "Chưa xác định"}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </td>
-                                  );
-                                case "paymentMethod":
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900 border border-gray-300"
-                                    >
-                                      {item["Hình thức thanh toán"] || "-"}
-                                    </td>
-                                  );
-                                default:
-                                  return null;
-                              }
-                            };
-
-                            return renderCell(columnKey);
-                          })}
-                          {canEditFullOrder && (
-                            <td className="px-3 py-3 whitespace-nowrap text-sm border border-gray-300 text-center">
-                              <button
-                                onClick={() => openEditFullOrder(item)}
-                                className="px-3 py-1 bg-green-600 text-white font-medium rounded hover:bg-green-700 text-sm"
+                          {col === "STT" ? (row['rowIndex'] || ((currentPage - 1) * rowsPerPage + rIdx + 1)) :
+                            DROPDOWN_OPTIONS[col] ? (
+                              <select
+                                className="w-full bg-transparent border-none outline-none text-sm p-0 m-0 cursor-pointer"
+                                value={String(val)}
+                                onChange={(e) => handleCellChange(orderId, key, e.target.value)}
                               >
-                                Sửa vận đơn
-                              </button>
-                            </td>
-                          )}
-                        </tr>
+                                {DROPDOWN_OPTIONS[col].map(o => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            ) : (viewMode === 'ORDER_MANAGEMENT' && (col === "Kết quả Check" || col === "Trạng thái giao hàng")) ? (
+                              <select
+                                className="w-full bg-transparent border-none outline-none text-sm p-0 m-0"
+                                value={String(val)}
+                                onChange={(e) => handleCellChange(orderId, key, e.target.value)}
+                              >
+                                {getMultiSelectOptions(key).filter(o => o !== '__EMPTY__').map(o => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            ) : EDITABLE_COLS.includes(col) ? (
+                              <input
+                                type="text"
+                                defaultValue={String(displayVal)}
+                                onBlur={(e) => {
+                                  const newValue = e.target.value;
+                                  if (newValue !== String(displayVal)) {
+                                    handleCellChange(orderId, key, newValue);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const newValue = e.target.value;
+                                    if (newValue !== String(displayVal)) {
+                                      handleCellChange(orderId, key, newValue);
+                                    }
+                                    e.target.blur();
+                                  } else if (e.key === 'Escape') {
+                                    e.target.value = String(displayVal);
+                                    e.target.blur();
+                                  }
+                                }}
+                                onFocus={(e) => {
+                                  e.target.select();
+                                  setSelection({ startRow: rIdx, startCol: cIdx, endRow: rIdx, endCol: cIdx });
+                                }}
+                                className="w-full h-full outline-none bg-transparent border-none p-0 text-sm"
+                              />
+                            ) : (
+                              displayVal
+                            )}
+                        </td>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+          </div>
+        </div>
 
-              {/* Pagination */}
-              {localF3Data.length > itemsPerPage && (
-                <div className="mt-6 transition-all duration-300 ease-in-out">
-                  <Pagination
-                    currentPage={currentPage}
-                    totalPages={totalPages}
-                    totalItems={localF3Data.length}
-                    itemsPerPage={itemsPerPage}
-                    onPageChange={handlePageChange}
-                  />
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Drag Indicator */}
-          {draggedColumn && (
-            <div className="fixed top-4 right-4 bg-green-600 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-bounce">
-              <div className="flex items-center gap-2">
-                <svg
-                  className="w-5 h-5 animate-spin"
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z"
-                    clipRule="evenodd"
-                  ></path>
-                </svg>
-                <span className="text-sm font-medium">Đang kéo cột...</span>
-              </div>
+        {/* Pagination */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mt-6">
+          <div className="flex justify-center items-center gap-4 flex-wrap">
+            <button
+              disabled={currentPage <= 1} 
+              onClick={() => setCurrentPage(p => p - 1)}
+              className="px-4 py-2 bg-[#F37021] hover:bg-[#e55f1a] text-white rounded-lg disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-medium transition-colors shadow-sm"
+            >
+              ← Trang trước
+            </button>
+            <span className="text-sm font-medium text-gray-700 px-4">
+              Trang <span className="font-bold text-[#F37021]">{currentPage}</span> / {totalPages || 1}
+            </span>
+            <button
+              disabled={currentPage >= totalPages} 
+              onClick={() => setCurrentPage(p => p + 1)}
+              className="px-4 py-2 bg-[#F37021] hover:bg-[#e55f1a] text-white rounded-lg disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-medium transition-colors shadow-sm"
+            >
+              Trang sau →
+            </button>
+            <div className="flex items-center gap-2 ml-4">
+              <label className="text-sm text-gray-600">Số dòng/trang:</label>
+              <select
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#F37021] bg-white"
+                value={rowsPerPage} 
+                onChange={e => { setRowsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+              >
+                <option value="50">50</option>
+                <option value="70">70</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="500">500</option>
+              </select>
             </div>
-          )}
-          {editingFullOrder && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 transition-all duration-300 ease-in-out">
-              <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto transform scale-100 transition-all duration-300 ease-out animate-in fade-in-0 zoom-in-95 hover:shadow-2xl">
-                <h3 className="text-xl font-bold mb-6 text-gray-800 transition-all duration-200">
-                  Sửa thông tin vận đơn
-                </h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Mã đơn hàng
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Mã đơn hàng"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Mã đơn hàng": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Tên khách hàng
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Name*"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Name*": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Điện thoại
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Phone*"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Phone*": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Địa chỉ
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Add"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          Add: e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Thành phố
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["City"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          City: e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Tỉnh
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["State"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          State: e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Mặt hàng
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Mặt hàng"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Mặt hàng": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Số lượng
-                    </label>
-                    <input
-                      type="number"
-                      value={editFormData["Số lượng mặt hàng 1"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Số lượng mặt hàng 1": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Giá bán ($)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={editFormData["Giá bán"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Giá bán": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Tổng tiền VNĐ
-                    </label>
-                    <input
-                      type="number"
-                      value={editFormData["Tổng tiền VNĐ"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Tổng tiền VNĐ": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      NV Marketing
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Nhân viên Marketing"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Nhân viên Marketing": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      NV Sale
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Nhân viên Sale"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Nhân viên Sale": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Team
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Team"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          Team: e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Ca
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Ca"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          Ca: e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Ngày lên đơn
-                    </label>
-                    <input
-                      type="date"
-                      value={
-                        editFormData["Ngày lên đơn"]
-                          ? new Date(editFormData["Ngày lên đơn"])
-                              .toISOString()
-                              .split("T")[0]
-                          : ""
-                      }
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Ngày lên đơn": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Trạng thái đơn
-                    </label>
-                    <select
-                      value={editFormData["Trạng thái đơn"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Trạng thái đơn": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    >
-                      <option value="Chưa xác định">Chưa xác định</option>
-                      <option value="Đơn hợp lệ">Đơn hợp lệ</option>
-                      <option value="Đơn hủy">Đơn hủy</option>
-                      <option value="Đơn chờ xử lý">Đơn chờ xử lý</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Hình thức thanh toán
-                    </label>
-                    <input
-                      type="text"
-                      value={editFormData["Hình thức thanh toán"]}
-                      onChange={(e) =>
-                        setEditFormData((prev) => ({
-                          ...prev,
-                          "Hình thức thanh toán": e.target.value,
-                        }))
-                      }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleUpdateFullOrder}
-                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all duration-200 transform hover:scale-105 hover:shadow-md"
-                  >
-                    Lưu thay đổi
-                  </button>
-                  <button
-                    onClick={closeEditFullOrder}
-                    className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-all duration-200 transform hover:scale-105 hover:shadow-md"
-                  >
-                    Hủy
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-          {/* Delete Confirmation Modal */}
-          {showDeleteModal && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-                <h3 className="text-lg font-bold mb-4">Xác nhận xóa vận đơn</h3>
-                <p className="mb-4">
-                  Bạn có chắc muốn xóa{" "}
-                  <span className="font-semibold">{selectedRows.size}</span> vận
-                  đơn đã chọn? Hành động này không thể hoàn tác.
-                </p>
-                <div className="flex justify-end gap-3">
-                  <button
-                    onClick={() => setShowDeleteModal(false)}
-                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-all duration-150"
-                    disabled={deleteInProgress}
-                  >
-                    Hủy
-                  </button>
-                  <button
-                    onClick={performDeleteSelectedOrders}
-                    className={`px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-all duration-150 flex items-center gap-2 ${
-                      deleteInProgress ? "opacity-70 cursor-wait" : ""
-                    }`}
-                    disabled={deleteInProgress}
-                  >
-                    <>
-                      {deleteInProgress ? (
-                        <svg
-                          className="w-4 h-4 animate-spin"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                        >
-                          <circle
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="white"
-                            strokeWidth="4"
-                            className="opacity-50"
-                          />
-                          <path
-                            d="M4 12a8 8 0 018-8"
-                            stroke="white"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                      ) : null}
-                      Xác nhận xóa
-                    </>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       </div>
+
+      {/* Selection Summary Bar */}
+      {calculatedSummary && calculatedSummary.count > 1 && (
+        <div className="selection-summary-bar">
+          <div className="summary-item">
+            <span className="summary-label">Số ô</span>
+            <span className="summary-value">{calculatedSummary.count}</span>
+          </div>
+          {calculatedSummary.sum !== 0 && (
+            <>
+              <div className="divider"></div>
+              <div className="summary-item">
+                <span className="summary-label">Tổng</span>
+                <span className="summary-value">{calculatedSummary.sum.toLocaleString('vi-VN')}</span>
+              </div>
+              <div className="divider"></div>
+              <div className="summary-item">
+                <span className="summary-label">TB</span>
+                <span className="summary-value">{calculatedSummary.avg.toLocaleString('vi-VN', { maximumFractionDigits: 2 })}</span>
+              </div>
+            </>
+          )}
+          <div className="divider"></div>
+          <div className="text-xs opacity-70">
+            <kbd className="bg-white/20 px-1.5 py-0.5 rounded text-[10px] mr-1">Ctrl+C</kbd> Copy
+            <span className="mx-2">|</span>
+            <kbd className="bg-white/20 px-1.5 py-0.5 rounded text-[10px] mr-1">Ctrl+V</kbd> Paste
+            <span className="mx-2">|</span>
+            <kbd className="bg-white/20 px-1.5 py-0.5 rounded text-[10px] mr-1">Esc</kbd> Bỏ chọn
+          </div>
+        </div>
+      )}
+
+      {/* Toast Container */}
+      <div className="fixed top-5 right-5 z-[9999] flex flex-col gap-2 pointer-events-none">
+        {toasts.map(t => (
+          <div key={t.id} className={`pointer-events-auto min-w-[300px] p-4 rounded shadow-lg bg-white border-l-4 transform transition-all animate-in slide-in-from-right-10 duration-300 ${t.type === 'success' ? 'border-green-500 bg-green-50' :
+            t.type === 'error' ? 'border-red-500 bg-red-50' :
+              t.type === 'loading' ? 'border-blue-500 bg-blue-50' : 'border-blue-500 bg-white'
+            }`}>
+            <div className="flex justify-between items-start">
+              <div className="flex items-center gap-3">
+                {t.type === 'loading' && <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>}
+                <span className="text-sm font-medium text-gray-800">{t.message}</span>
+              </div>
+              <button onClick={() => removeToast(t.id)} className="text-gray-400 hover:text-gray-600 font-bold">&times;</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Sync Popover */}
+      <Suspense fallback={<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full"></div></div>}>
+        <SyncPopover
+          isOpen={syncPopoverOpen}
+          onClose={() => setSyncPopoverOpen(false)}
+          pendingChanges={pendingChanges}
+          legacyChanges={legacyChanges}
+          onApply={handleUpdateAll}
+          onDiscard={() => {
+            if (confirm("Hủy bỏ tất cả thay đổi?")) {
+              setPendingChanges(new Map());
+              setLegacyChanges(new Map());
+              localStorage.removeItem('speegoPendingChanges');
+              setSyncPopoverOpen(false);
+              refreshData();
+            }
+          }}
+        />
+      </Suspense>
+
+      {/* Quick Add Modal */}
+      <Suspense fallback={<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full"></div></div>}>
+        <QuickAddModal
+          isOpen={quickAddModalOpen}
+          onClose={() => setQuickAddModalOpen(false)}
+          onSync={handleQuickSync}
+        />
+      </Suspense>
+
+      {/* Column Settings Modal */}
+      <ColumnSettingsModal
+        isOpen={showColumnSettings}
+        onClose={() => setShowColumnSettings(false)}
+        allColumns={allColumns}
+        visibleColumns={visibleColumns}
+        onToggleColumn={(col) => setVisibleColumns(prev => ({ ...prev, [col]: !prev[col] }))}
+        onSelectAll={() => {
+          const all = {};
+          allColumns.forEach(col => { all[col] = true; });
+          setVisibleColumns(all);
+        }}
+        onDeselectAll={() => {
+          const none = {};
+          allColumns.forEach(col => { none[col] = false; });
+          setVisibleColumns(none);
+        }}
+        onResetDefault={() => {
+          const defaultCols = {};
+          allColumns.forEach(col => { defaultCols[col] = true; });
+          setVisibleColumns(defaultCols);
+        }}
+        defaultColumns={allColumns}
+      />
     </div>
   );
 }
+
+export default VanDon;

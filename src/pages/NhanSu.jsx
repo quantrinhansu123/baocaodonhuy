@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { UserManagementTab } from "../components/tabs/UserManagementTab";
 import FilterPanel from "../components/FilterPanel";
+import { ChevronLeft } from 'lucide-react';
 
 export default function NhanSu() {
   const [userTeam, setUserTeam] = useState("");
@@ -128,7 +129,10 @@ export default function NhanSu() {
   return (
     <div className="mx-auto px-8 py-8 bg-white">
       <div className="mb-6">
-        <Link to="/" className="text-sm text-gray-600 hover:text-gray-800">← Quay lại</Link>
+        <Link to="/" className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2">
+          <ChevronLeft className="w-4 h-4" />
+          Quay lại
+        </Link>
         <h1 className="text-2xl font-bold text-gray-800 mt-2">Quản lý Nhân sự</h1>
       </div>
 

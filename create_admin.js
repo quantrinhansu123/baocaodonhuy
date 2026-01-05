@@ -9,14 +9,14 @@ import bcrypt from 'bcryptjs';
 
 // Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBKajnty6kaDBAHldn-BGu-qja5Jo9R0ks",
-  authDomain: "report-867c2.firebaseapp.com",
-  databaseURL: "https://report-867c2-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "report-867c2",
-  storageBucket: "report-867c2.firebasestorage.app",
-  messagingSenderId: "911588040639",
-  appId: "1:911588040639:web:60b5380acd25ba85c8cb0a",
-  measurementId: "G-SFM9W6K1NT"
+  apiKey: "AIzaSyASyxDOJ_pGwjBaQqThoYQRmWyq2sq6Eh0",
+  authDomain: "report-55c9f.firebaseapp.com",
+  databaseURL: "https://report-55c9f-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "report-55c9f",
+  storageBucket: "report-55c9f.firebasestorage.app",
+  messagingSenderId: "104832186162",
+  appId: "1:104832186162:web:de2428475f558f78b6c92b",
+  measurementId: "G-JLZJWEMVBF"
 };
 
 // Khởi tạo Firebase
@@ -27,7 +27,7 @@ const database = getDatabase(app);
 const ADMIN_UID = 'admin-001';
 const adminUser = {
   username: 'admin',
-  password: 'Admin@123456',
+  password: '123456',
   email: 'admin@marketing.com',
   name: 'Administrator',
   role: 'admin',
@@ -119,7 +119,7 @@ async function listAllUsers() {
   try {
     console.log('\n📋 Danh sách users trong bảng "users":');
     console.log('-'.repeat(100));
-    
+
     const usersRef = ref(database, 'users');
     const snapshot = await get(usersRef);
 
@@ -127,7 +127,7 @@ async function listAllUsers() {
       const users = snapshot.val();
       console.log('ID         | Username       | Name                | Email                          | Role  | Team');
       console.log('-'.repeat(100));
-      
+
       for (const [userId, userData] of Object.entries(users)) {
         console.log(
           `${userId.substring(0, 10).padEnd(10)} | ${(userData.username || 'N/A').padEnd(14)} | ${(userData.name || 'N/A').padEnd(19)} | ${(userData.email || 'N/A').padEnd(30)} | ${(userData.role || 'user').padEnd(5)} | ${userData.team || 'N/A'}`
@@ -147,7 +147,7 @@ async function listHumanResources() {
   try {
     console.log('\n📋 Danh sách users trong bảng "human_resources":');
     console.log('-'.repeat(80));
-    
+
     const hrRef = ref(database, 'human_resources');
     const snapshot = await get(hrRef);
 
@@ -155,7 +155,7 @@ async function listHumanResources() {
       const users = snapshot.val();
       console.log('ID         | Name                | Email                          | Role  | Team');
       console.log('-'.repeat(80));
-      
+
       for (const [userId, userData] of Object.entries(users)) {
         console.log(
           `${userId.substring(0, 10).padEnd(10)} | ${(userData.name || 'N/A').padEnd(19)} | ${(userData.email || 'N/A').padEnd(30)} | ${(userData.role || 'user').padEnd(5)} | ${userData.Team || 'N/A'}`

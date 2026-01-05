@@ -5,8 +5,8 @@ import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
 function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('admin@marketing.com');
+  const [password, setPassword] = useState('123456');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -18,12 +18,12 @@ function Login() {
 
     try {
       // Lấy danh sách users từ URL
-      const response = await fetch('https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/Tài_khoản.json');
+      const response = await fetch('https://report-55c9f-default-rtdb.asia-southeast1.firebasedatabase.app/users.json');
       if (!response.ok) {
         throw new Error('Failed to fetch users');
       }
       const users = await response.json();
-      
+
       // Tìm user với email khớp
       const userEntry = Object.entries(users).find(
         ([key, user]) => user.email === email
@@ -31,7 +31,7 @@ function Login() {
 
       if (userEntry) {
         const [userId, userData] = userEntry;
-        
+
         // Kiểm tra xem user có mật khẩu không
         if (!userData.password) {
           toast.error('Tài khoản chưa được thiết lập mật khẩu. Vui lòng liên hệ quản trị viên!', {
@@ -41,17 +41,22 @@ function Login() {
           setLoading(false);
           return;
         }
-        
+
         // So sánh mật khẩu đã hash
         const passwordMatch = bcrypt.compareSync(password, userData.password);
-        
+
         if (passwordMatch) {
           // Lưu thông tin đăng nhập vào localStorage
           localStorage.setItem('isAuthenticated', 'true');
           localStorage.setItem('userId', userId);
           localStorage.setItem('username', userData.username || userData.name);
-          localStorage.setItem('userRole', userData.role || 'user');
-          localStorage.setItem('userEmail', userData.email || '');
+          
+          // Force admin role for admin@marketing.com
+          const userEmail = userData.email || '';
+          const userRole = userEmail === 'admin@marketing.com' ? 'admin' : (userData.role || 'user');
+          localStorage.setItem('userRole', userRole);
+          
+          localStorage.setItem('userEmail', userEmail);
           localStorage.setItem('userTeam', userData.team || '');
 
           toast.success('Đăng nhập thành công!', {
@@ -92,7 +97,7 @@ function Login() {
         {/* Logo and Title */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
-            <img 
+            <img
               src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2Ff930e667.%E1%BA%A2nh.025539.jpg"
               alt="Logo"
               className="h-20 w-20 rounded-full shadow-lg"
@@ -152,11 +157,10 @@ function Login() {
             <button
               type="submit"
               disabled={loading}
-              className={`w-full py-3 px-4 rounded-lg font-semibold text-white transition ${
-                loading
+              className={`w-full py-3 px-4 rounded-lg font-semibold text-white transition ${loading
                   ? 'bg-gray-400 cursor-not-allowed'
                   : 'bg-primary hover:bg-green-700 active:bg-green-800'
-              }`}
+                }`}
             >
               {loading ? (
                 <span className="flex items-center justify-center">
@@ -178,7 +182,7 @@ function Login() {
           <p>&copy; 2025 Báo cáo Marketing. All rights reserved.</p>
         </div>
       </div>
-      
+
       {/* Toast Container */}
       <ToastContainer
         position="top-right"

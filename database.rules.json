@@ -3,6 +3,18 @@
     "reports": {
       ".read": true,
       ".write": true
+    },
+    "masterData": {
+      ".read": true,
+      ".write": true
+    },
+    "users": {
+      ".read": true,
+      ".write": true
+    },
+    "human_resources": {
+      ".read": true,
+      ".write": true
     }
   }
 }

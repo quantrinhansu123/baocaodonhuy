@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
 // Use REST calls to Firebase Realtime Database; avoid using the Firebase SDK here
 import { toast } from "react-toastify";
+import { ChevronLeft } from 'lucide-react';
 
 export default function ChangeLogViewer() {
   const [changeLogs, setChangeLogs] = useState([]);
@@ -918,6 +920,10 @@ export default function ChangeLogViewer() {
     <div className="px-8 py-6">
       {/* Header */}
       <div className="mb-6">
+        <Link to="/" className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-4">
+          <ChevronLeft className="w-4 h-4" />
+          Quay lại
+        </Link>
         <h2 className="text-2xl font-bold text-primary">
           Lịch sử thay đổi vận đơn
         </h2>

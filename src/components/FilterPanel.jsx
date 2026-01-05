@@ -94,6 +94,8 @@ function FilterPanel({
   showMarkets = true,
   showPaymentMethodSearch = false,
   variant = 'sidebar',
+  enableDateFilter = true,
+  onEnableDateFilterChange = null,
 }) {
   const [openGroup, setOpenGroup] = useState(null);
   const panelRef = useRef(null);
@@ -188,14 +190,37 @@ function FilterPanel({
                     <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                   </div>
 
+                  {onEnableDateFilterChange && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enableDateFilter}
+                        onChange={(e) => onEnableDateFilterChange(e.target.checked)}
+                        className="w-4 h-4 text-[#F37021] border-gray-300 rounded focus:ring-[#F37021]"
+                      />
+                      <span className="text-xs font-medium text-gray-600">Bật lọc ngày</span>
+                    </label>
+                  )}
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
                       <label className="text-xs font-medium text-gray-600">Từ</label>
-                      <input type="date" value={filters.startDate || ''} onChange={(e) => handleDateChange('startDate', e.target.value)} className="px-3 py-2 text-sm border border-gray-200 rounded-lg" />
+                      <input 
+                        type="date" 
+                        disabled={onEnableDateFilterChange && !enableDateFilter}
+                        value={filters.startDate || ''} 
+                        onChange={(e) => handleDateChange('startDate', e.target.value)} 
+                        className="px-3 py-2 text-sm border border-gray-200 rounded-lg disabled:bg-gray-100 disabled:cursor-not-allowed" 
+                      />
                     </div>
                     <div className="flex items-center gap-2">
                       <label className="text-xs font-medium text-gray-600">Đến</label>
-                      <input type="date" value={filters.endDate || ''} onChange={(e) => handleDateChange('endDate', e.target.value)} className="px-3 py-2 text-sm border border-gray-200 rounded-lg" />
+                      <input 
+                        type="date" 
+                        disabled={onEnableDateFilterChange && !enableDateFilter}
+                        value={filters.endDate || ''} 
+                        onChange={(e) => handleDateChange('endDate', e.target.value)} 
+                        className="px-3 py-2 text-sm border border-gray-200 rounded-lg disabled:bg-gray-100 disabled:cursor-not-allowed" 
+                      />
                     </div>
                   </div>
                 </div>
@@ -246,9 +271,38 @@ function FilterPanel({
                   </select>
                   <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                 </div>
+                {onEnableDateFilterChange && (
+                  <label className="flex items-center gap-2 cursor-pointer mb-2">
+                    <input
+                      type="checkbox"
+                      checked={enableDateFilter}
+                      onChange={(e) => onEnableDateFilterChange(e.target.checked)}
+                      className="w-4 h-4 text-[#F37021] border-gray-300 rounded focus:ring-[#F37021]"
+                    />
+                    <span className="text-xs font-medium text-gray-600">Bật lọc ngày</span>
+                  </label>
+                )}
                 <div className="grid grid-cols-1 gap-3 mt-3">
-                  <div><label className="block text-xs font-medium text-gray-600 mb-1">Từ</label><input type="date" value={filters.startDate || ''} onChange={(e) => handleDateChange('startDate', e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl" /></div>
-                  <div><label className="block text-xs font-medium text-gray-600 mb-1">Đến</label><input type="date" value={filters.endDate || ''} onChange={(e) => handleDateChange('endDate', e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl" /></div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Từ</label>
+                    <input 
+                      type="date" 
+                      disabled={onEnableDateFilterChange && !enableDateFilter}
+                      value={filters.startDate || ''} 
+                      onChange={(e) => handleDateChange('startDate', e.target.value)} 
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl disabled:bg-gray-100 disabled:cursor-not-allowed" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Đến</label>
+                    <input 
+                      type="date" 
+                      disabled={onEnableDateFilterChange && !enableDateFilter}
+                      value={filters.endDate || ''} 
+                      onChange={(e) => handleDateChange('endDate', e.target.value)} 
+                      className="w-full px-3 py-2 text-sm border border-gray-200 rounded-xl disabled:bg-gray-100 disabled:cursor-not-allowed" 
+                    />
+                  </div>
                 </div>
               </div>
             )}

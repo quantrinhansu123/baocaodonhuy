@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { F3ReportTab } from "../components/tabs/F3ReportTab";
 import FilterPanel from "../components/FilterPanel";
+import ColumnSettingsModal from "../components/ColumnSettingsModal";
+import { ChevronLeft, Settings } from 'lucide-react';
 
 export default function F3Report() {
   const [userTeam, setUserTeam] = useState("");
@@ -32,6 +34,25 @@ export default function F3Report() {
   });
 
   const [quickSelectValue, setQuickSelectValue] = useState("");
+  const [enableDateFilter, setEnableDateFilter] = useState(true);
+  const [showColumnSettings, setShowColumnSettings] = useState(false);
+  
+  // Column config
+  const columnsConfig = [
+    { key: 'orderCode', label: 'Mã đơn' },
+    { key: 'date', label: 'Ngày' },
+    { key: 'name', label: 'Tên' },
+    { key: 'product', label: 'Sản phẩm' },
+    { key: 'market', label: 'Thị trường' },
+    { key: 'status', label: 'Trạng thái' },
+    { key: 'revenue', label: 'Doanh số' },
+  ];
+  
+  const [visibleColumns, setVisibleColumns] = useState(() => {
+    const obj = {};
+    columnsConfig.forEach(c => { obj[c.key] = true; });
+    return obj;
+  });
 
   const handleFilterChange = (filterType, value) => {
     setFilters((prev) => {
@@ -128,27 +149,73 @@ export default function F3Report() {
   return (
     <div className="mx-auto px-8 py-8 bg-white">
       <div className="mb-6">
-        <Link to="/" className="text-sm text-gray-600 hover:text-gray-800">← Quay lại</Link>
+        <Link to="/" className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2">
+          <ChevronLeft className="w-4 h-4" />
+          Quay lại
+        </Link>
         <h1 className="text-2xl font-bold text-gray-800 mt-2">Báo cáo F3</h1>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-6 gap-6">
-        <FilterPanel
-          activeTab={"f3"}
-          filters={filters}
-          handleFilterChange={(type, value) => handleFilterChange(type, value)}
-          quickSelectValue={quickSelectValue}
-          handleQuickDateSelect={(e) => handleQuickDateSelect(e)}
-          availableFilters={availableFilters}
-          userRole={userRole}
-          hasActiveFilters={() => hasActiveFilters()}
-          clearAllFilters={() => clearAllFilters()}
-        />
+      <div className="grid grid-cols-1 lg:col-span-6 gap-6">
+        <div className="lg:col-span-1">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold">Bộ lọc</span>
+            <button
+              onClick={() => setShowColumnSettings(true)}
+              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-700 text-white rounded text-xs font-medium transition-colors flex items-center gap-1"
+            >
+              <Settings className="w-3 h-3" />
+              Cột
+            </button>
+          </div>
+          <FilterPanel
+            activeTab={"f3"}
+            filters={filters}
+            handleFilterChange={(type, value) => handleFilterChange(type, value)}
+            quickSelectValue={quickSelectValue}
+            handleQuickDateSelect={(e) => handleQuickDateSelect(e)}
+            availableFilters={availableFilters}
+            userRole={userRole}
+            hasActiveFilters={() => hasActiveFilters()}
+            clearAllFilters={() => clearAllFilters()}
+            enableDateFilter={enableDateFilter}
+            onEnableDateFilterChange={setEnableDateFilter}
+          />
+        </div>
 
         <div className="lg:col-span-5">
           <F3ReportTab filters={filters} setFilters={setFilters} userRole={userRole} userEmail={userEmail} />
         </div>
       </div>
+
+      {/* Column Settings Modal */}
+      <ColumnSettingsModal
+        isOpen={showColumnSettings}
+        onClose={() => setShowColumnSettings(false)}
+        allColumns={columnsConfig.map(c => c.key)}
+        visibleColumns={visibleColumns}
+        onToggleColumn={(key) => {
+          const next = { ...visibleColumns };
+          next[key] = !next[key];
+          setVisibleColumns(next);
+        }}
+        onSelectAll={() => {
+          const all = {};
+          columnsConfig.forEach(c => { all[c.key] = true; });
+          setVisibleColumns(all);
+        }}
+        onDeselectAll={() => {
+          const none = {};
+          columnsConfig.forEach(c => { none[c.key] = false; });
+          setVisibleColumns(none);
+        }}
+        onResetDefault={() => {
+          const defaultCols = {};
+          columnsConfig.forEach(c => { defaultCols[c.key] = true; });
+          setVisibleColumns(defaultCols);
+        }}
+        defaultColumns={columnsConfig.map(c => c.key)}
+      />
     </div>
   );
 }

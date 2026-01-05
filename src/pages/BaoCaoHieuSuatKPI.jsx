@@ -1,9 +1,10 @@
 // BaoCaoHieuSuatKPI.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ChevronLeft, RefreshCw, Settings } from "lucide-react";
 import { toast } from "react-toastify";
 import FilterPanel from "../components/FilterPanel";
+import ColumnSettingsModal from "../components/ColumnSettingsModal";
 
 export default function BaoCaoHieuSuatKPI() {
   const [userTeam, setUserTeam] = useState("");
@@ -45,6 +46,8 @@ export default function BaoCaoHieuSuatKPI() {
 
   // Quick select value for date filter
   const [quickSelectValue, setQuickSelectValue] = useState("");
+  const [enableDateFilter, setEnableDateFilter] = useState(true);
+  const [showColumnSettings, setShowColumnSettings] = useState(false);
 
   // Column visibility states
   const [visibleColumns, setVisibleColumns] = useState({
@@ -349,7 +352,12 @@ export default function BaoCaoHieuSuatKPI() {
 
       // Process F3 data
       try {
-        f3Data = await f3Response.json();
+        if (!f3Response.ok) {
+          console.error(`F3 API Error ${f3Response.status}: ${f3Response.statusText}`);
+          f3Data = [];
+        } else {
+          f3Data = await f3Response.json();
+        }
 
         // Normalize F3 data: Firebase may return an object keyed by id instead of an array.
         if (!f3Data) {
@@ -364,7 +372,15 @@ export default function BaoCaoHieuSuatKPI() {
       // Process API data for CPQC - SỬA LẠI: không đọc response ở đây nữa
       let apiData = null;
       try {
-        apiData = await apiResponse.json(); // CHỈ ĐỌC 1 LẦN
+        // Check if response is OK before parsing JSON
+        if (!apiResponse.ok) {
+          const errorText = await apiResponse.text();
+          console.error(`API Error ${apiResponse.status}: ${apiResponse.statusText}`, errorText);
+          // Don't throw, just log and continue without API data
+          console.warn('Continuing without API data due to server error');
+        } else {
+          apiData = await apiResponse.json(); // CHỈ ĐỌC 1 LẦN
+        }
 
         // Build CPQC map from API data
         if (apiData && apiData.success) {
@@ -625,7 +641,8 @@ export default function BaoCaoHieuSuatKPI() {
       );
     }
 
-    if (filters.startDate || filters.endDate) {
+    // Date filter (only if enabled)
+    if (enableDateFilter && (filters.startDate || filters.endDate)) {
       filtered = filtered.filter((report) => {
         if (!report.ngay) return false;
         const reportDate = new Date(report.ngay);
@@ -671,7 +688,7 @@ export default function BaoCaoHieuSuatKPI() {
     }
 
     return filtered;
-  }, [masterData, filters, userRole, userName, getTeamMembers]);
+  }, [masterData, filters, userRole, userName, getTeamMembers, enableDateFilter]);
 
   // Generate KPI table data với phân quyền tối ưu
   const kpiData = useMemo(() => {
@@ -889,7 +906,7 @@ export default function BaoCaoHieuSuatKPI() {
           to="/"
           className="text-sm text-gray-600 hover:text-gray-800 flex-shrink-0 flex items-center gap-2"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ChevronLeft className="w-4 h-4" />
           Quay lại
         </Link>
         <h2 className="text-2xl font-bold text-primary uppercase text-center flex-1">
@@ -931,21 +948,32 @@ export default function BaoCaoHieuSuatKPI() {
       </div>
 
       {/* FilterPanel */}
-      <FilterPanel
-        activeTab="kpi"
-        filters={filters}
-        handleFilterChange={handleFilterChange}
-        quickSelectValue={quickSelectValue}
-        handleQuickDateSelect={handleQuickDateSelect}
-        availableFilters={availableFilters}
-        userRole={userRole}
-        hasActiveFilters={hasActiveFilters}
-        clearAllFilters={clearAllFilters}
-        variant="topbar"
-        columnsConfig={columnsConfig}
-        visibleColumns={visibleColumns}
-        onVisibleColumnsChange={handleVisibleColumnsChange}
-      />
+      <div className="flex items-center justify-between mb-4">
+        <FilterPanel
+          activeTab="kpi"
+          filters={filters}
+          handleFilterChange={handleFilterChange}
+          quickSelectValue={quickSelectValue}
+          handleQuickDateSelect={handleQuickDateSelect}
+          availableFilters={availableFilters}
+          userRole={userRole}
+          hasActiveFilters={hasActiveFilters}
+          clearAllFilters={clearAllFilters}
+          variant="topbar"
+          columnsConfig={columnsConfig}
+          visibleColumns={visibleColumns}
+          onVisibleColumnsChange={handleVisibleColumnsChange}
+          enableDateFilter={enableDateFilter}
+          onEnableDateFilterChange={setEnableDateFilter}
+        />
+        <button
+          onClick={() => setShowColumnSettings(true)}
+          className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2 ml-4"
+        >
+          <Settings className="w-4 h-4" />
+          Cài đặt cột
+        </button>
+      </div>
 
       {/* Bảng và nội dung liên quan - Có background và border */}
       <div className="bg-white rounded-lg shadow-md border border-gray-300 overflow-hidden mt-6">
@@ -1328,6 +1356,35 @@ export default function BaoCaoHieuSuatKPI() {
           </>
         )}
       </div>
+
+      {/* Column Settings Modal */}
+      <ColumnSettingsModal
+        isOpen={showColumnSettings}
+        onClose={() => setShowColumnSettings(false)}
+        allColumns={columnsConfig.map(c => c.key)}
+        visibleColumns={visibleColumns}
+        onToggleColumn={(key) => {
+          const next = { ...visibleColumns };
+          next[key] = !next[key];
+          setVisibleColumns(next);
+        }}
+        onSelectAll={() => {
+          const all = {};
+          columnsConfig.forEach(c => { all[c.key] = true; });
+          setVisibleColumns(all);
+        }}
+        onDeselectAll={() => {
+          const none = {};
+          columnsConfig.forEach(c => { none[c.key] = false; });
+          setVisibleColumns(none);
+        }}
+        onResetDefault={() => {
+          const defaultCols = {};
+          columnsConfig.forEach(c => { defaultCols[c.key] = true; });
+          setVisibleColumns(defaultCols);
+        }}
+        defaultColumns={columnsConfig.map(c => c.key)}
+      />
     </div>
   );
 }

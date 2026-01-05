@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useReportData } from "../hooks/useReportData";
 import FilterPanel from "../components/FilterPanel";
+import ColumnSettingsModal from "../components/ColumnSettingsModal";
+import { ChevronLeft, Settings } from 'lucide-react';
 
 // Firebase URLs
 const F3_URL = 'https://lumi-6dff7-default-rtdb.asia-southeast1.firebasedatabase.app/datasheet/F3.json';
@@ -208,6 +210,8 @@ export default function BaoCaoChiTiet() {
 
   const [quickSelectValue, setQuickSelectValue] = useState("");
   const [filteredData, setFilteredData] = useState([]);
+  const [showColumnSettings, setShowColumnSettings] = useState(false);
+  const [enableDateFilter, setEnableDateFilter] = useState(true);
 
   // Columns visibility config
   const columnsConfig = [
@@ -420,27 +424,30 @@ export default function BaoCaoChiTiet() {
   useEffect(() => {
     let filtered = [...(mktData || [])];
 
-    if (filters.startDate) {
-      const startDate = new Date(filters.startDate);
-      startDate.setHours(0, 0, 0, 0);
-      filtered = filtered.filter((r) => {
-        const date = r.__date || r.ngay;
-        if (!date || isNaN(date)) return false;
-        const dateObj = new Date(date);
-        dateObj.setHours(0, 0, 0, 0);
-        return dateObj >= startDate;
-      });
-    }
-    if (filters.endDate) {
-      const endDate = new Date(filters.endDate);
-      endDate.setHours(23, 59, 59, 999);
-      filtered = filtered.filter((r) => {
-        const date = r.__date || r.ngay;
-        if (!date || isNaN(date)) return false;
-        const dateObj = new Date(date);
-        dateObj.setHours(0, 0, 0, 0);
-        return dateObj <= endDate;
-      });
+    // Date filter (only if enabled)
+    if (enableDateFilter) {
+      if (filters.startDate) {
+        const startDate = new Date(filters.startDate);
+        startDate.setHours(0, 0, 0, 0);
+        filtered = filtered.filter((r) => {
+          const date = r.__date || r.ngay;
+          if (!date || isNaN(date)) return false;
+          const dateObj = new Date(date);
+          dateObj.setHours(0, 0, 0, 0);
+          return dateObj >= startDate;
+        });
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        filtered = filtered.filter((r) => {
+          const date = r.__date || r.ngay;
+          if (!date || isNaN(date)) return false;
+          const dateObj = new Date(date);
+          dateObj.setHours(0, 0, 0, 0);
+          return dateObj <= endDate;
+        });
+      }
     }
 
     if (filters.products.length > 0) {
@@ -472,7 +479,7 @@ export default function BaoCaoChiTiet() {
     }
 
     setFilteredData(filtered);
-  }, [filters, mktData]);
+  }, [filters, mktData, enableDateFilter]);
 
   // Calculate summary data with F3 integration
   const summaryData = useMemo(() => {
@@ -852,26 +859,40 @@ export default function BaoCaoChiTiet() {
   return (
     <div className="mx-auto px-8 py-8 bg-white">
       <div className="mb-6">
-        <Link to="/" className="text-sm text-gray-600 hover:text-gray-800">← Quay lại</Link>
+        <Link to="/" className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2">
+          <ChevronLeft className="w-4 h-4" />
+          Quay lại
+        </Link>
         <h1 className="text-2xl font-bold text-gray-800 mt-2">Báo cáo chi tiết</h1>
       </div>
 
       <div>
-        <FilterPanel
-          activeTab={"detailed"}
-          filters={filters}
-          handleFilterChange={(type, value) => handleFilterChange(type, value)}
-          quickSelectValue={quickSelectValue}
-          handleQuickDateSelect={(e) => handleQuickDateSelect(e)}
-          availableFilters={availableFilters}
-          userRole={userRole}
-          hasActiveFilters={() => hasActiveFilters()}
-          clearAllFilters={() => clearAllFilters()}
-          variant="topbar"
-          columnsConfig={columnsConfig}
-          visibleColumns={visibleColumns}
-          onVisibleColumnsChange={handleVisibleColumnsChange}
-        />
+        <div className="flex items-center justify-between mb-4">
+          <FilterPanel
+            activeTab={"detailed"}
+            filters={filters}
+            handleFilterChange={(type, value) => handleFilterChange(type, value)}
+            quickSelectValue={quickSelectValue}
+            handleQuickDateSelect={(e) => handleQuickDateSelect(e)}
+            availableFilters={availableFilters}
+            userRole={userRole}
+            hasActiveFilters={() => hasActiveFilters()}
+            clearAllFilters={() => clearAllFilters()}
+            variant="topbar"
+            columnsConfig={columnsConfig}
+            visibleColumns={visibleColumns}
+            onVisibleColumnsChange={handleVisibleColumnsChange}
+            enableDateFilter={enableDateFilter}
+            onEnableDateFilterChange={setEnableDateFilter}
+          />
+          <button
+            onClick={() => setShowColumnSettings(true)}
+            className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-2 ml-4"
+          >
+            <Settings className="w-4 h-4" />
+            Cài đặt cột
+          </button>
+        </div>
 
         <div className="mt-4">
           <div className="space-y-6">
@@ -1439,6 +1460,35 @@ export default function BaoCaoChiTiet() {
           </div>
         </div>
       </div>
+
+      {/* Column Settings Modal */}
+      <ColumnSettingsModal
+        isOpen={showColumnSettings}
+        onClose={() => setShowColumnSettings(false)}
+        allColumns={columnsConfig.map(c => c.key)}
+        visibleColumns={visibleColumns}
+        onToggleColumn={(key) => {
+          const next = { ...visibleColumns };
+          next[key] = !next[key];
+          setVisibleColumns(next);
+        }}
+        onSelectAll={() => {
+          const all = {};
+          columnsConfig.forEach(c => { all[c.key] = true; });
+          setVisibleColumns(all);
+        }}
+        onDeselectAll={() => {
+          const none = {};
+          columnsConfig.forEach(c => { none[c.key] = false; });
+          setVisibleColumns(none);
+        }}
+        onResetDefault={() => {
+          const defaultCols = {};
+          columnsConfig.forEach(c => { defaultCols[c.key] = true; });
+          setVisibleColumns(defaultCols);
+        }}
+        defaultColumns={columnsConfig.map(c => c.key)}
+      />
     </div>
   );
 }

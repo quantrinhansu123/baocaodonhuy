@@ -324,7 +324,7 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
       {/* Header with Add Button */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-primary">Quản lý Nhân sự</h2>
-        {userRole === 'admin' && (
+        {(userRole === 'admin' || userRole === 'leader') && (
           <button
             onClick={openAddModal}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition flex items-center gap-2"
@@ -651,8 +651,7 @@ export function UserManagementTab({ userRole, userTeam, searchText, teamFilter }
                     Team: editingUser.Team,
                     'Vị trí': editingUser['Vị trí'],
                     'chi nhánh': editingUser['chi nhánh'],
-                    Ca: editingUser.Ca,
-                    id: editingUser.id
+                    Ca: editingUser.Ca
                   });
                 }}
                 className="px-5 py-2.5 bg-green-500 text-white font-medium rounded-lg hover:bg-green-600 transition-colors"

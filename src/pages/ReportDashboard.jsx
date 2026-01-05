@@ -9,7 +9,9 @@ import { F3ReportTab } from "../components/tabs/F3ReportTab";
 import { KPIReportTab } from "../components/tabs/KPIReportTab";
 import { MarketEffectivenessTab } from "../components/tabs/MarketEffectivenessTab";
 import { UserManagementTab } from "../components/tabs/UserManagementTab";
+import { BaoCaoThuCongTab } from "../components/tabs/BaoCaoThuCongTab";
 import FilterPanel from "../components/FilterPanel";
+import { ChevronLeft } from 'lucide-react';
 
 function ReportDashboard() {
   // Load user info from localStorage
@@ -690,6 +692,12 @@ function ReportDashboard() {
   return (
     <div className="mx-auto px-8 py-8 bg-white">
       {/* Header */}
+      <div className="mb-6">
+        <Link to="/" className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-800 mb-2">
+          <ChevronLeft className="w-4 h-4" />
+          Quay lại
+        </Link>
+      </div>
       {/* <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <div className="flex items-center">
           <img
@@ -714,6 +722,7 @@ function ReportDashboard() {
               {[
                 { id: "kpi", label: "Báo cáo KPI" },
                 { id: "market", label: "Hiệu quả MKT" },
+                { id: "thucong", label: "Báo cáo thực công" },
                 // { id: "f3", label: "Báo cáo F3" },
               ].map((tab) => (
                 <button
@@ -735,21 +744,24 @@ function ReportDashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-6 gap-6">
-        <FilterPanel
-          activeTab={activeTab}
-          filters={filters}
-          handleFilterChange={handleFilterChange}
-          quickSelectValue={quickSelectValue}
-          handleQuickDateSelect={handleQuickDateSelect}
-          availableFilters={availableFilters}
-          userRole={userRole}
-          hasActiveFilters={hasActiveFilters}
-          clearAllFilters={clearAllFilters}
-        />
+        {activeTab !== "thucong" && (
+          <FilterPanel
+            activeTab={activeTab}
+            filters={filters}
+            handleFilterChange={handleFilterChange}
+            quickSelectValue={quickSelectValue}
+            handleQuickDateSelect={handleQuickDateSelect}
+            availableFilters={availableFilters}
+            userRole={userRole}
+            hasActiveFilters={hasActiveFilters}
+            clearAllFilters={clearAllFilters}
+          />
+        )}
 
-        <div className="lg:col-span-5">
+        <div className={activeTab !== "thucong" ? "lg:col-span-5" : "lg:col-span-6"}>
           {activeTab === "kpi" && <KPIReportTab data={filteredData} filters={filters} />}
           {activeTab === "market" && <MarketEffectivenessTab data={filteredData} filters={filters} />}
+          {activeTab === "thucong" && <BaoCaoThuCongTab tableName="Báo cáo MKT" />}
           {activeTab === "f3" && (
             <F3ReportTab filters={filters} setFilters={setFilters} userRole={userRole} userEmail={userEmail} />
           )}

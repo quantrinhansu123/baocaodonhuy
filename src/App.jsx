@@ -13,10 +13,18 @@ import BaoCaoChiTiet from './pages/BaoCaoChiTiet';
 import KPIReport from './pages/KPIReport';
 import HieuQuaMarketing from './pages/HieuQuaMarketing';
 import BaoCaoMarketing from './pages/BaoCaoMarketing';
+import BaoCaoSale from './pages/BaoCaoSale';
 import F3Report from './pages/F3Report';
 import NhanSu from './pages/NhanSu';
 import ReportDashboard from './pages/ReportDashboard';
 import BaoCaoHieuSuatKPI from './pages/BaoCaoHieuSuatKPI';
+import DanhSachDon from './pages/DanhSachDon';
+import QuanLyCSKH from './pages/QuanLyCSKH';
+import DonChiaCSKH from './pages/DonChiaCSKH';
+import XemBaoCaoMKT from './pages/XemBaoCaoMKT';
+import NhapDonMoi from './pages/NhapDonMoi';
+import FFM from './pages/FFM';
+import LenHSanXuat from './pages/LenHSanXuat';
 
 /* Header component extracted to `src/components/Header.jsx` */
 
@@ -36,12 +44,20 @@ function App() {
           <Route path="/bao-cao-kpi" element={<ProtectedRoute><KPIReport /></ProtectedRoute>} />
           <Route path="/hieu-qua-mkt" element={<ProtectedRoute><HieuQuaMarketing /></ProtectedRoute>} />
           <Route path="/bao-cao-marketing" element={<ProtectedRoute><BaoCaoMarketing /></ProtectedRoute>} />
+          <Route path="/bao-cao-sale" element={<ProtectedRoute><BaoCaoSale /></ProtectedRoute>} />
           <Route path="/bao-cao-f3" element={<ProtectedRoute><F3Report /></ProtectedRoute>} />
           <Route path="/bao-cao-hieu-suat-kpi" element={<ProtectedRoute><BaoCaoHieuSuatKPI /></ProtectedRoute>} />
           <Route path="/nhan-su" element={<ProtectedRoute><NhanSu /></ProtectedRoute>} />
-          <Route path="/gui-bao-cao" element={<ProtectedRoute><ReportForm /></ProtectedRoute>} />
+
           <Route path="/ho-so" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
           <Route path="/van-don" element={<ProtectedRoute><VanDon /></ProtectedRoute>} />
+          <Route path="/danh-sach-don" element={<ProtectedRoute><DanhSachDon /></ProtectedRoute>} />
+          <Route path="/nhap-don" element={<ProtectedRoute><NhapDonMoi /></ProtectedRoute>} />
+          <Route path="/quan-ly-cskh" element={<ProtectedRoute><QuanLyCSKH /></ProtectedRoute>} />
+          <Route path="/don-chia-cskh" element={<ProtectedRoute><DonChiaCSKH /></ProtectedRoute>} />
+          <Route path="/xem-bao-cao-mkt" element={<ProtectedRoute><XemBaoCaoMKT /></ProtectedRoute>} />
+          <Route path="/ffm" element={<ProtectedRoute><FFM /></ProtectedRoute>} />
+          <Route path="/lenh-san-xuat" element={<ProtectedRoute><LenHSanXuat /></ProtectedRoute>} />
           <Route path="/lich-su-thay-doi" element={<ProtectedRoute><ChangeLogViewer /></ProtectedRoute>} />
         </Routes>
 
