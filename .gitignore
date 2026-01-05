@@ -37,3 +37,4 @@ ui-debug.log
 # Firebase Service Account Key (SENSITIVE - DO NOT COMMIT!)
 functions/service-account-key.json
 **/service-account-key.json
+.vercel

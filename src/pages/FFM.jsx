@@ -2,12 +2,10 @@
 import {
   PRIMARY_KEY_COLUMN,
   ORDER_MGMT_COLUMNS,
-  BILL_LADING_COLUMNS,
   COLUMN_MAPPING,
   EDITABLE_COLS,
   TEAM_COLUMN_NAME,
-  DROPDOWN_OPTIONS,
-  LONG_TEXT_COLS
+  DROPDOWN_OPTIONS
 } from '../types';
 import '../styles/selection.css';
 import * as API from '../services/api';
@@ -23,7 +21,8 @@ const BULK_THRESHOLD = 1;
 function FFM() {
   const [allData, setAllData] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState('ORDER_MANAGEMENT');
+  // Only ORDER_MANAGEMENT mode - BILL_OF_LADING removed
+  const viewMode = 'ORDER_MANAGEMENT';
 
   const [legacyChanges, setLegacyChanges] = useState(new Map());
   const [pendingChanges, setPendingChanges] = useState(new Map());
@@ -53,10 +52,6 @@ function FFM() {
   const [omDateType, setOmDateType] = useState('Ngày đóng hàng');
   const [omShowTracking, setOmShowTracking] = useState(false);
   const [omShowDuplicateTracking, setOmShowDuplicateTracking] = useState(false);
-
-  const [bolActiveTab, setBolActiveTab] = useState('all');
-  const [bolDateType, setBolDateType] = useState('Ngày lên đơn');
-  const [isLongTextExpanded, setIsLongTextExpanded] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(50);
@@ -94,20 +89,6 @@ function FFM() {
     }
   }, []);
 
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (viewMode === 'BILL_OF_LADING' && e.ctrlKey && e.key === 'Enter') {
-        e.preventDefault();
-        setIsLongTextExpanded((prev) => {
-          const newState = !prev;
-          addToast(newState ? 'Đã mở rộng ô văn bản' : 'Đã thu gọn ô văn bản', 'info', 1500);
-          return newState;
-        });
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [viewMode]);
 
   const addToast = (message, type, duration = 3000) => {
     const id = ++toastIdCounter.current;
@@ -181,7 +162,7 @@ function FFM() {
     await loadData();
   };
 
-  const currentColumns = viewMode === 'ORDER_MANAGEMENT' ? ORDER_MGMT_COLUMNS : BILL_LADING_COLUMNS;
+  const currentColumns = ORDER_MGMT_COLUMNS;
 
   const getFilteredData = useMemo(() => {
     let data = [...allData];
@@ -208,7 +189,8 @@ function FFM() {
       return rowCopy;
     });
 
-    if (viewMode === 'ORDER_MANAGEMENT') {
+    // ORDER_MANAGEMENT filtering
+    {
       data = data.filter((row) => {
         const carrier = row['Đơn vị vận chuyển'] || row['Đơn_vị_vận_chuyển'];
         return carrier?.toString().toUpperCase() === 'MGT';
@@ -239,23 +221,9 @@ function FFM() {
         });
         data.sort((a, b) => Number(a['rowIndex'] || 0) - Number(b['rowIndex'] || 0));
       }
-    } else {
-      if (bolActiveTab === 'japan') {
-        data = data.filter((row) => (row['Khu vực'] || row['khu vực']) === 'Nhật Bản');
-      } else if (bolActiveTab === 'hcm') {
-        data = data.filter((row) => row['Team'] === 'HCM' && !row['Đơn vị vận chuyển'] && row['Kết quả Check'] === 'OK');
-      } else if (bolActiveTab === 'hanoi') {
-        data = data.filter((row) => row['Team'] === 'Hà Nội' && !row['Đơn vị vận chuyển'] && row['Kết quả Check'] === 'OK');
-      }
-
-      data.sort((a, b) => {
-        const da = new Date(a['Ngày lên đơn'] || a['Thời gian lên đơn'] || 0).getTime();
-        const db = new Date(b['Ngày lên đơn'] || b['Thời gian lên đơn'] || 0).getTime();
-        return db - da;
-      });
     }
 
-    const activeDateType = viewMode === 'ORDER_MANAGEMENT' ? omDateType : bolDateType;
+    const activeDateType = omDateType;
 
     if (filterValues.market.length > 0) {
       const set = new Set(filterValues.market);
@@ -335,7 +303,7 @@ function FFM() {
     }
 
     return data;
-  }, [allData, legacyChanges, pendingChanges, viewMode, omActiveTeam, omDateType, omShowTracking, omShowDuplicateTracking, bolActiveTab, bolDateType, filterValues, dateFrom, dateTo, mgtNoiBoOrder]);
+  }, [allData, legacyChanges, pendingChanges, omActiveTeam, omDateType, omShowTracking, omShowDuplicateTracking, filterValues, dateFrom, dateTo, mgtNoiBoOrder]);
 
   const getUniqueValues = useMemo(() => (key) => {
     const values = new Set();
@@ -581,7 +549,7 @@ function FFM() {
     addToast(`Đã đồng bộ ${updatedCount} trường dữ liệu.`, 'success');
   };
 
-  const effectiveRowsPerPage = viewMode === 'BILL_OF_LADING' ? 30 : rowsPerPage;
+  const effectiveRowsPerPage = rowsPerPage;
 
   const paginatedData = useMemo(() => {
     return getFilteredData.slice((currentPage - 1) * effectiveRowsPerPage, currentPage * effectiveRowsPerPage);
@@ -1033,37 +1001,8 @@ function FFM() {
         </div>
       </div>
 
-      <div className="flex justify-center gap-4 mb-6">
-        <button
-          onClick={() => {
-            setViewMode('ORDER_MANAGEMENT');
-            setCurrentPage(1);
-          }}
-          className={`px-6 py-3 rounded-lg shadow-sm font-bold text-lg transition-all ${
-            viewMode === 'ORDER_MANAGEMENT'
-              ? 'bg-primary text-white ring-2 ring-offset-2 ring-primary'
-              : 'bg-white text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          📦 QUẢN LÝ ĐƠN HÀNG
-        </button>
-        <button
-          onClick={() => {
-            setViewMode('BILL_OF_LADING');
-            setCurrentPage(1);
-          }}
-          className={`px-6 py-3 rounded-lg shadow-sm font-bold text-lg transition-all ${
-            viewMode === 'BILL_OF_LADING'
-              ? 'bg-[#F37021] text-white ring-2 ring-offset-2 ring-[#F37021]'
-              : 'bg-white text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          🚚 QUẢN LÝ VẬN ĐƠN
-        </button>
-      </div>
-
-      {viewMode === 'ORDER_MANAGEMENT' && (
-        <div className="space-y-4 mb-4">
+      {/* ORDER_MANAGEMENT Controls */}
+      <div className="space-y-4 mb-4">
           <div className="bg-white p-4 rounded shadow-sm flex flex-wrap gap-4 items-end">
             <div className="flex flex-col gap-1 w-48">
               <label className="text-xs font-semibold text-gray-500">Thị trường</label>
@@ -1131,74 +1070,7 @@ function FFM() {
             ))}
           </div>
         </div>
-      )}
 
-      {viewMode === 'BILL_OF_LADING' && (
-        <div className="mb-4">
-          <div className="flex border-b-2 border-gray-200 mb-4 overflow-x-auto bg-white rounded-t-lg">
-            {[
-              { id: 'all', label: 'Dữ liệu đơn hàng' },
-              { id: 'japan', label: 'Đơn Nhật' },
-              { id: 'hcm', label: 'FFM đẩy vận hành' },
-              { id: 'hanoi', label: 'FFM Hà Nội' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                className={`px-6 py-3 text-base font-semibold transition-colors border-b-[3px] -mb-[3px] whitespace-nowrap ${
-                  bolActiveTab === tab.id
-                    ? 'text-[#F37021] border-[#F37021] bg-transparent'
-                    : 'text-gray-500 border-transparent hover:text-[#F37021] hover:bg-[#fef0e8]'
-                }`}
-                onClick={() => {
-                  setBolActiveTab(tab.id);
-                  setCurrentPage(1);
-                }}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="bg-white p-3 rounded-b shadow-sm flex gap-4 items-end flex-wrap border border-t-0 border-gray-200">
-            <div className="flex items-center gap-1 bg-gray-50 p-1 rounded border">
-              <span className="text-sm text-gray-600 pl-1">Ngày:</span>
-              <select value={bolDateType} onChange={(e) => setBolDateType(e.target.value)} className="text-sm border rounded p-1 bg-white">
-                <option value="Ngày lên đơn">Lên đơn</option>
-                <option value="Ngày đóng hàng">Đóng hàng</option>
-              </select>
-              <input type="date" className="p-1 border rounded text-sm" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
-              <span className="text-gray-400">-</span>
-              <input type="date" className="p-1 border rounded text-sm" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
-            </div>
-
-            <div className="flex flex-col gap-1 w-40">
-              <label className="text-xs font-semibold text-gray-500">Sản phẩm</label>
-              <MultiSelect
-                label="Lọc sản phẩm"
-                mainFilter={true}
-                options={getUniqueValues('Mặt hàng')}
-                selected={filterValues.product}
-                onChange={(vals) => setFilterValues((prev) => ({ ...prev, product: vals }))}
-              />
-            </div>
-
-            <div className="flex flex-col gap-1 w-40">
-              <label className="text-xs font-semibold text-gray-500">Khu vực</label>
-              <MultiSelect
-                label="Lọc khu vực"
-                mainFilter={true}
-                options={getUniqueValues('Khu vực')}
-                selected={filterValues.market}
-                onChange={(vals) => setFilterValues((prev) => ({ ...prev, market: vals }))}
-              />
-            </div>
-
-            <button onClick={refreshData} className="bg-warning hover:bg-yellow-500 text-white px-3 py-1.5 rounded shadow-sm font-medium text-sm mb-0.5">
-              Xóa lọc
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className="sticky top-0 z-[40] bg-white p-4 rounded-md shadow-md border border-gray-200 mb-6 flex justify-between items-center flex-wrap gap-4">
         <div className="flex items-center gap-2 flex-wrap">
@@ -1233,8 +1105,7 @@ function FFM() {
           </div>
         </div>
 
-        {viewMode === 'ORDER_MANAGEMENT' && (
-          <div className="flex gap-2">
+        <div className="flex gap-2">
             <button
               onClick={() => {
                 setOmShowTracking(!omShowTracking);
@@ -1258,7 +1129,6 @@ function FFM() {
               {omShowDuplicateTracking ? 'Tất cả đơn' : 'Trùng Tracking'}
             </button>
           </div>
-        )}
       </div>
 
       <div className="bg-white shadow-md rounded border border-gray-200 overflow-auto max-h-[65vh] relative select-none">
@@ -1369,7 +1239,7 @@ function FFM() {
                                 </option>
                               ))}
                             </select>
-                          ) : viewMode === 'ORDER_MANAGEMENT' && (col === 'Kết quả Check' || col === 'Trạng thái giao hàng') ? (
+                          ) : (col === 'Kết quả Check' || col === 'Trạng thái giao hàng') ? (
                             <select
                               className="w-full bg-transparent border-none outline-none text-sm p-0 m-0"
                               value={String(val)}
