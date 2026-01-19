@@ -9,20 +9,6 @@ export default defineConfig(({ mode }) => {
         port: 3000,
         host: '0.0.0.0',
       },
-      build: {
-        outDir: 'dist',
-        assetsDir: 'assets',
-        sourcemap: false,
-        minify: 'esbuild',
-        rollupOptions: {
-          output: {
-            manualChunks: {
-              'react-vendor': ['react', 'react-dom'],
-              'recharts-vendor': ['recharts']
-            }
-          }
-        }
-      },
       plugins: [react()],
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
