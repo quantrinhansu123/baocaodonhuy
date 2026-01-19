@@ -25,4 +25,13 @@ dist-ssr
 
 .vercel
 
-.vercel
+# Exclude Desktop and other system directories
+Desktop/
+AppData/
+Documents/
+Downloads/
+Music/
+Pictures/
+Videos/
+*.lnk
+desktop.ini
