@@ -8,16 +8,38 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        fs: {
+          strict: false,
+          allow: ['..']
+        }
       },
       plugins: [react()],
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY || ''),
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || '')
       },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      build: {
+        outDir: 'dist',
+        assetsDir: 'assets',
+        sourcemap: false,
+        minify: 'esbuild',
+        chunkSizeWarningLimit: 1000,
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+              'charts-vendor': ['recharts'],
+            }
+          }
+        }
+      },
+      optimizeDeps: {
+        exclude: ['Desktop']
       }
     };
 });
